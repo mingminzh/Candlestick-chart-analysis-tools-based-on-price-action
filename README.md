@@ -1,0 +1,101 @@
+# K线回放交易 Demo
+
+基于 **Vue 3 + Vite + @mg-exchange/charts** 的前端 demo，演示K线回放、画线和模拟交易功能。
+
+## 功能特性
+
+### 📊 K线回放
+- 一次性预生成 600 根 K 线数据
+- 初始只显示 200 根，后面的"未来数据"对图表不可见
+- **下一根**：点击或按 `Space` 推进一根 K 线，图表通过 `chart.updateBar()` 推送新数据
+- **自动播放**：每 400ms 自动前进一根（按 `P` 切换）
+- **重置**：随时回到起点（按 `R`）
+- 实时显示 OHLCV + 进度条
+
+### ✏️ 画线功能
+左侧工具栏提供 12 个常用画线工具：趋势线 / 水平线 / 射线 / 平行通道 / 斐波那契 / 矩形 / 椭圆 / 箭头 / 文字 / 多空头位置等。
+
+支持：
+- 切换画线工具（再次点击同一工具退出）
+- "磁吸 OHLC" 模式，吸附到K线高低点
+- 一键清除全部画线
+- 用 `@mg-exchange/charts` 内置的 47 种画线工具
+
+### 💰 模拟交易
+- **快速下单**：右上角"市价做多 / 做空"按钮
+- **画线下单**（核心）：
+  - 在图表上**右键** → 弹出自定义菜单 → 选择"限价买入 / 卖出 / 止损单"
+  - 委托单立刻在图表上画出**水平委托线**
+  - **拖动委托线**即可修改委托价格（`orderLineMoved` 事件）
+  - K线推进时自动撮合：触及限价/止损价立即成交
+- **持仓覆盖层**：使用 `setPositionOverlays()` 显示入场价位 + 盈亏
+- **账户面板**：余额 / 浮动盈亏 / 已实现盈亏 / 总权益
+- **历史成交**记录
+
+### ⌨️ 快捷键
+- `Space` → 前进一根 K 线
+- `P` → 切换自动播放
+- `R` → 重置回放
+
+## 运行
+
+```bash
+npm install
+npm run dev
+```
+
+打开 http://localhost:5173
+
+## 项目结构
+
+```
+src/
+├── main.js                       # Vue 入口
+├── App.vue                       # 主页面（三栏布局）
+├── styles/global.css             # 全局样式
+├── data/mockData.js              # K线数据生成器（确定性伪随机）
+├── composables/
+│   └── useChart.js               # 核心 composable：Chart 实例 + 状态管理
+└── components/
+    ├── ReplayBar.vue             # 顶部回放控制条
+    ├── DrawingToolbar.vue        # 左侧画线工具栏
+    └── TradePanel.vue            # 右侧交易/账户面板
+```
+
+## 关键实现说明
+
+### 回放机制（`useChart.js`）
+
+```
+allBars[600]  ←─── 一次性生成的完整数据
+              ↓
+   replayIndex ───→ 暴露给图表的"最新已显示"索引
+              ↓
+   datafeed.getBars() 只返回 [0..replayIndex] 内的数据
+              ↓
+   replayNext() ⇒ replayIndex++ + chart.updateBar(allBars[replayIndex])
+              ⇒ 触发挂单撮合 matchPendingOrders()
+              ⇒ 刷新 setPositionOverlays() 浮盈
+```
+
+### 画线下单
+
+`chart.setTradeMode(true, { contextMenuItems })` 注册自定义右键菜单。
+用户点击菜单项后 `tradeRequested` 事件携带 `{ side, price, action }`，由 `onTradeRequested()` 路由到对应的下单函数，调用 `chart.addOrderLine()` 在图表上画出委托线。
+
+### 撮合引擎
+
+每根新 K 线推进时遍历待成交挂单：
+
+- **限价买**：`bar.low <= order.price`
+- **限价卖**：`bar.high >= order.price`
+- **止损买**：`bar.high >= order.price`
+- **止损卖**：`bar.low <= order.price`
+
+触发后从挂单列表移除，并以委托价创建持仓。
+
+## 依赖
+
+- vue ^3.4
+- vite ^5.4
+- @mg-exchange/charts ^0.1.1

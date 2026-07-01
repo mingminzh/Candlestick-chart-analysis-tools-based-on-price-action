@@ -28,11 +28,13 @@ const {
   canReplayPrev,
   isAutoPlaying,
   currentBar,
+  barCountSettings,
   replayNext,
   replayPrev,
   replayReset,
   startAutoPlay,
   stopAutoPlay,
+  updateBarCountSettings,
   // 画线
   activeDrawingTool,
   drawingsCount,
@@ -210,10 +212,12 @@ async function onCsvSelected(e) {
         :can-replay-prev="canReplayPrev"
         :is-auto-playing="isAutoPlaying"
         :current-bar="currentBar"
+        :bar-count-settings="barCountSettings"
         @next="replayNext"
         @prev="replayPrev"
         @reset="replayReset"
         @auto-toggle="onAutoToggle"
+        @update-count-settings="updateBarCountSettings"
       />
     </div>
 

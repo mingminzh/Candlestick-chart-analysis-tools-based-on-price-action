@@ -1,5 +1,5 @@
 import { ref, reactive, computed } from 'vue'
-import { Chart, ema } from '@mg-exchange/charts'
+import { Chart } from '@mg-exchange/charts'
 import { generateMockBars } from '../data/mockData.js'
 import { parseCsvBars } from '../data/csvBars.js'
 import { BTC_TIMEFRAMES, fetchLatestBtcBars } from '../data/binanceData.js'
@@ -9,7 +9,45 @@ const STORAGE_KEY = 'pa-training-replay-session:v1'
 const DEFAULT_CONTEXT_BARS = 200
 const FUTURE_PADDING_BARS = 80
 const DEFAULT_INITIAL_BALANCE = 1000
-const BAR_COUNT_STEP = 5
+
+const replayEma20 = {
+  name: 'Replay EMA20',
+  shortName: 'EMA20',
+  description: 'EMA20 calculated only from revealed replay bars',
+  overlay: true,
+  params: [
+    { name: 'period', type: 'number', default: 20, min: 1, max: 500, step: 1 },
+    { name: 'color', type: 'color', default: '#f0b429' }
+  ],
+  plots: [
+    { key: 'ema', type: 'line', color: '#f0b429', lineWidth: 1.5 }
+  ],
+  calculate(bars, params) {
+    const period = Number(params.period) || 20
+    const k = 2 / (period + 1)
+    let seedSum = 0
+    let emaValue
+    let realCount = 0
+
+    return bars.map((bar) => {
+      if (bar.futurePadding) {
+        return { time: bar.time, values: { ema: undefined } }
+      }
+      realCount += 1
+      if (realCount < period) {
+        seedSum += bar.close
+        return { time: bar.time, values: { ema: undefined } }
+      }
+      if (realCount === period) {
+        seedSum += bar.close
+        emaValue = seedSum / period
+      } else {
+        emaValue = bar.close * k + emaValue * (1 - k)
+      }
+      return { time: bar.time, values: { ema: emaValue } }
+    })
+  }
+}
 
 function makeDefaultDataset() {
   return {
@@ -165,6 +203,11 @@ export function useChart() {
   const isLoadingData = ref(false)
   const dataError = ref('')
   const selectedTradeId = ref(savedSession?.selectedTradeId || '')
+  const barCountSettings = reactive({
+    enabled: savedSession?.barCountSettings?.enabled ?? true,
+    reminderInterval: savedSession?.barCountSettings?.reminderInterval ?? 5,
+    reminderTargets: savedSession?.barCountSettings?.reminderTargets || ''
+  })
 
   const visibleStartIndex = computed(() => Math.min(DEFAULT_CONTEXT_BARS - 1, Math.max(allBars.value.length - 1, 0)))
 
@@ -401,7 +444,7 @@ export function useChart() {
 
   function ensureCoreIndicators() {
     if (!chart || ema20IndicatorId) return
-    ema20IndicatorId = chart.addIndicator(ema, {
+    ema20IndicatorId = chart.addIndicator(replayEma20, {
       period: 20,
       color: '#f0b429'
     })
@@ -1161,17 +1204,44 @@ export function useChart() {
 
   function refreshBarCountMarkers() {
     if (!chart || typeof chart.setBarMarkers !== 'function') return
-    const markers = allBars.value
-      .slice(0, replayIndex.value + 1)
-      .map((bar, idx) => ({ bar, idx }))
-      .filter(({ idx }) => idx === 0 || idx === replayIndex.value || (idx + 1) % BAR_COUNT_STEP === 0)
-      .map(({ bar, idx }) => ({
+    if (!barCountSettings.enabled) {
+      chart.setBarMarkers([])
+      return
+    }
+    const interval = Math.max(0, Number(barCountSettings.reminderInterval) || 0)
+    const targetSet = new Set(
+      String(barCountSettings.reminderTargets || '')
+        .split(/[,，\s]+/)
+        .map(v => Number.parseInt(v, 10))
+        .filter(v => Number.isInteger(v) && v > 0)
+    )
+    const markers = allBars.value.slice(0, replayIndex.value + 1).map((bar, idx) => {
+      const barNo = idx + 1
+      const isCurrent = idx === replayIndex.value
+      const isTarget = targetSet.has(barNo)
+      const isInterval = interval > 0 && barNo % interval === 0
+      return {
         time: bar.time,
-        label: `B${idx + 1}`,
-        color: idx === replayIndex.value ? '#f0b429' : '#58a6ff',
+        label: isTarget || isInterval ? `★B${barNo}` : `B${barNo}`,
+        color: isCurrent ? '#f0b429' : isTarget ? '#ff7b72' : isInterval ? '#d29922' : '#58a6ff',
         position: 'above'
-      }))
+      }
+    })
     chart.setBarMarkers(markers)
+  }
+
+  function updateBarCountSettings(patch) {
+    if (!patch || typeof patch !== 'object') return
+    if (typeof patch.enabled === 'boolean') barCountSettings.enabled = patch.enabled
+    if (Object.prototype.hasOwnProperty.call(patch, 'reminderInterval')) {
+      const interval = Number(patch.reminderInterval)
+      barCountSettings.reminderInterval = Number.isFinite(interval) && interval >= 0 ? Math.floor(interval) : 0
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'reminderTargets')) {
+      barCountSettings.reminderTargets = String(patch.reminderTargets || '')
+    }
+    refreshBarCountMarkers()
+    saveSession()
   }
 
   function selectTradeForReview(tradeId) {
@@ -1190,6 +1260,7 @@ export function useChart() {
         bars: allBars.value
       },
       replayIndex: replayIndex.value,
+      barCountSettings: { ...barCountSettings },
       account: { ...account },
       orders: orders.map(o => ({ ...o })),
       positions: positions.map(p => ({ ...p })),
@@ -1248,11 +1319,13 @@ export function useChart() {
     canReplayPrev,
     isAutoPlaying,
     currentBar,
+    barCountSettings,
     replayNext,
     replayPrev,
     replayReset,
     startAutoPlay,
     stopAutoPlay,
+    updateBarCountSettings,
 
     activeDrawingTool,
     drawingsCount,

@@ -7,10 +7,11 @@ const props = defineProps({
   canReplayNext: { type: Boolean, required: true },
   canReplayPrev: { type: Boolean, required: true },
   isAutoPlaying: { type: Boolean, required: true },
-  currentBar: { type: Object, default: null }
+  currentBar: { type: Object, default: null },
+  barCountSettings: { type: Object, default: () => ({ enabled: true, reminderInterval: 5, reminderTargets: '' }) }
 })
 
-const emit = defineEmits(['next', 'prev', 'reset', 'auto-toggle'])
+const emit = defineEmits(['next', 'prev', 'reset', 'auto-toggle', 'update-count-settings'])
 
 const progress = computed(() => {
   if (!props.replayMax) return 0
@@ -26,6 +27,10 @@ function fmtTime(time) {
   const hh = String(d.getUTCHours()).padStart(2, '0')
   const mm = String(d.getUTCMinutes()).padStart(2, '0')
   return `${yyyy}-${mo}-${dd} ${hh}:${mm}`
+}
+
+function updateCountSetting(patch) {
+  emit('update-count-settings', patch)
 }
 </script>
 
@@ -70,6 +75,38 @@ function fmtTime(time) {
       </div>
       <div class="progress">
         <div class="bar" :style="{ width: progress + '%' }"></div>
+      </div>
+      <div class="count-settings">
+        <label class="count-toggle">
+          <input
+            type="checkbox"
+            :checked="barCountSettings.enabled"
+            @change="(e) => updateCountSetting({ enabled: e.target.checked })"
+          />
+          <span>K线编号</span>
+        </label>
+        <label>
+          <span>每隔</span>
+          <input
+            type="number"
+            min="0"
+            step="1"
+            :value="barCountSettings.reminderInterval"
+            :disabled="!barCountSettings.enabled"
+            @change="(e) => updateCountSetting({ reminderInterval: e.target.value })"
+          />
+          <span>根提醒</span>
+        </label>
+        <label class="target-input">
+          <span>指定</span>
+          <input
+            type="text"
+            placeholder="37,91,109"
+            :value="barCountSettings.reminderTargets"
+            :disabled="!barCountSettings.enabled"
+            @change="(e) => updateCountSetting({ reminderTargets: e.target.value })"
+          />
+        </label>
       </div>
     </div>
 
@@ -138,6 +175,41 @@ button.big {
   background: #0d1117;
   border-radius: 3px;
   overflow: hidden;
+}
+
+.count-settings {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: #8b949e;
+}
+
+.count-settings label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.count-settings input[type='number'] {
+  width: 48px;
+}
+
+.count-settings input[type='text'] {
+  width: 96px;
+}
+
+.count-settings input {
+  height: 22px;
+  padding: 1px 5px;
+  font-size: 11px;
+}
+
+.count-toggle input {
+  width: auto;
+  height: auto;
 }
 
 .bar {

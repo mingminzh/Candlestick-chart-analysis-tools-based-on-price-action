@@ -1,6 +1,146 @@
 import { ref, reactive, computed } from 'vue'
-import { Chart } from '@mg-exchange/charts'
+import { Chart, ema } from '@mg-exchange/charts'
 import { generateMockBars } from '../data/mockData.js'
+import { parseCsvBars } from '../data/csvBars.js'
+import { BTC_TIMEFRAMES, fetchLatestBtcBars } from '../data/binanceData.js'
+import { buildCoachPayload, generateLocalCoachFeedback } from '../coach/localCoach.js'
+
+const STORAGE_KEY = 'pa-training-replay-session:v1'
+const DEFAULT_CONTEXT_BARS = 200
+const FUTURE_PADDING_BARS = 80
+const DEFAULT_INITIAL_BALANCE = 1000
+const BAR_COUNT_STEP = 5
+
+function makeDefaultDataset() {
+  return {
+    symbol: 'BTCUSDT',
+    timeframe: '1H',
+    source: 'mock',
+    name: '模拟数据',
+    bars: generateMockBars({ timeframe: '1H', count: 600 })
+  }
+}
+
+function canUseStorage() {
+  return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
+}
+
+function safeReadSession() {
+  if (!canUseStorage()) return null
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch (err) {
+    console.warn('读取训练会话失败:', err)
+    return null
+  }
+}
+
+function safeWriteSession(payload) {
+  if (!canUseStorage()) return
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
+  } catch (err) {
+    console.warn('保存训练会话失败:', err)
+  }
+}
+
+function assignReactiveArray(target, items) {
+  target.splice(0, target.length, ...(Array.isArray(items) ? items : []))
+}
+
+function assignReactiveObject(target, source) {
+  for (const key of Object.keys(target)) delete target[key]
+  if (!source || typeof source !== 'object') return
+  for (const [key, value] of Object.entries(source)) target[key] = value
+}
+
+function nextNumericId(items, prefix) {
+  let max = 0
+  for (const item of items) {
+    const raw = String(item?.id || '')
+    if (raw.startsWith(prefix)) {
+      const n = Number(raw.slice(prefix.length))
+      if (Number.isFinite(n)) max = Math.max(max, n)
+    }
+  }
+  return max + 1
+}
+
+function inferTimeframe(bars) {
+  if (!Array.isArray(bars) || bars.length < 2) return '1H'
+  const seconds = Math.max(1, bars[1].time - bars[0].time)
+  if (seconds <= 60) return '1m'
+  if (seconds <= 300) return '5m'
+  if (seconds <= 900) return '15m'
+  if (seconds <= 1800) return '30m'
+  if (seconds <= 3600) return '1H'
+  if (seconds <= 14400) return '4H'
+  return '1D'
+}
+
+function inferDatasetMeta(fileName, bars) {
+  const clean = String(fileName || '')
+    .replace(/\.[^.]+$/, '')
+    .replace(/[_-](\d{4}|\d{8}).*$/, '')
+  const parts = clean.split(/[_\-\s]+/).filter(Boolean)
+  return {
+    symbol: (parts[0] || 'IMPORTED').toUpperCase(),
+    timeframe: parts.find(p => /^\d+[mhd]$/i.test(p))?.toUpperCase().replace('M', 'm').replace('D', 'D').replace('H', 'H') || inferTimeframe(bars)
+  }
+}
+
+function blankReview() {
+  return {
+    marketState: '',
+    barType: '',
+    alwaysIn: '',
+    tradePlan: '',
+    signalQuality: '',
+    invalidation: '',
+    note: ''
+  }
+}
+
+function countBy(records, field, fallback = '未选择') {
+  return records.reduce((acc, record) => {
+    const key = record?.[field] || fallback
+    acc[key] = (acc[key] || 0) + 1
+    return acc
+  }, {})
+}
+
+function summarizeTrades(trades) {
+  const closed = trades.filter(t => Number.isFinite(Number(t.pnl)))
+  const wins = closed.filter(t => Number(t.pnl) > 0)
+  const losses = closed.filter(t => Number(t.pnl) < 0)
+  const totalPnl = closed.reduce((sum, t) => sum + Number(t.pnl || 0), 0)
+  const avgPnl = closed.length ? totalPnl / closed.length : 0
+  const grossProfit = wins.reduce((sum, t) => sum + Number(t.pnl || 0), 0)
+  const grossLoss = Math.abs(losses.reduce((sum, t) => sum + Number(t.pnl || 0), 0))
+
+  return {
+    total: closed.length,
+    wins: wins.length,
+    losses: losses.length,
+    breakeven: closed.length - wins.length - losses.length,
+    winRate: closed.length ? wins.length / closed.length : 0,
+    totalPnl,
+    avgPnl,
+    grossProfit,
+    grossLoss,
+    profitFactor: grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0
+  }
+}
+
+function timeframeSeconds(tf) {
+  const raw = String(tf || '1H')
+  const n = Number.parseInt(raw, 10) || 1
+  if (/m$/i.test(raw)) return n * 60
+  if (/h$/i.test(raw)) return n * 3600
+  if (/d$/i.test(raw)) return n * 86400
+  return 3600
+}
 
 /**
  * 主 composable - 管理 Chart 实例和整个 demo 的状态
@@ -9,17 +149,24 @@ import { generateMockBars } from '../data/mockData.js'
  *   - 一次性生成全部 bars
  *   - 初始用 chart.setData(allBars.slice(0, initialVisible)) 显示一部分
  *   - 提供一个空 datafeed (Chart 构造时必填，但我们不依赖它加载数据)
- *   - 点击"下一根" → chart.updateBar(allBars[replayIndex])
+ *   - 点击"下一根/上一根" → 重新渲染 [0..replayIndex]，保持回放状态可逆
  */
 export function useChart() {
-  // ---------- 配置 ----------
-  const totalBars = 600
-  const initialVisible = 200
-  const symbol = 'BTCUSDT'
-  const timeframe = '1H'
-
   // ---------- 数据 ----------
-  const allBars = generateMockBars({ timeframe, count: totalBars })
+  const savedSession = safeReadSession()
+  const defaultDataset = makeDefaultDataset()
+  const initialDataset = savedSession?.dataset?.bars?.length ? savedSession.dataset : defaultDataset
+  const allBars = ref(initialDataset.bars)
+  const symbol = ref(initialDataset.symbol || defaultDataset.symbol)
+  const timeframe = ref(initialDataset.timeframe || defaultDataset.timeframe)
+  const dataSource = ref(initialDataset.source || defaultDataset.source)
+  const datasetName = ref(initialDataset.name || defaultDataset.name)
+  const sessionMessage = ref(savedSession?.dataset?.bars?.length ? '已恢复上次训练会话' : '使用内置模拟数据')
+  const isLoadingData = ref(false)
+  const dataError = ref('')
+  const selectedTradeId = ref(savedSession?.selectedTradeId || '')
+
+  const visibleStartIndex = computed(() => Math.min(DEFAULT_CONTEXT_BARS - 1, Math.max(allBars.value.length - 1, 0)))
 
   // Datafeed —— 在 chart 构造时 loadInitialData() 会调一次 getBars，
   // 我们返回当前 replayIndex 范围内的 bars。
@@ -27,7 +174,7 @@ export function useChart() {
   const datafeed = {
     async getBars() {
       // 返回 [0..replayIndex] 范围内的初始可见数据
-      return allBars.slice(0, initialVisible)
+      return replayDisplayBars()
     },
     subscribe() {
       // 不订阅实时流，回放手动驱动
@@ -40,7 +187,7 @@ export function useChart() {
       return {
         symbol: sym,
         name: sym,
-        exchange: 'Mock',
+        exchange: dataSource.value === 'mock' ? 'Mock' : 'Imported',
         type: 'perpetual',
         pricePrecision: 2,
         qtyPrecision: 4,
@@ -51,16 +198,22 @@ export function useChart() {
 
   // ---------- Chart 实例 ----------
   let chart = null
+  let ema20IndicatorId = null
   const chartReady = ref(false)
 
   // ---------- 回放状态 ----------
-  const replayIndex = ref(initialVisible - 1)
-  const replayMax = totalBars - 1
-  const canReplayNext = computed(() => replayIndex.value < replayMax)
+  const replayIndex = ref(
+    Number.isInteger(savedSession?.replayIndex)
+      ? Math.min(savedSession.replayIndex, allBars.value.length - 1)
+      : visibleStartIndex.value
+  )
+  const replayMax = computed(() => Math.max(allBars.value.length - 1, 0))
+  const canReplayNext = computed(() => replayIndex.value < replayMax.value)
+  const canReplayPrev = computed(() => replayIndex.value > 0)
   const isAutoPlaying = ref(false)
   let autoPlayTimer = null
 
-  const currentBar = computed(() => allBars[replayIndex.value] || null)
+  const currentBar = computed(() => allBars.value[replayIndex.value] || null)
 
   // ---------- 画线状态 ----------
   const activeDrawingTool = ref(null)
@@ -68,13 +221,25 @@ export function useChart() {
 
   // ---------- 交易状态 ----------
   const account = reactive({
-    balance: 10000,
-    initialBalance: 10000
+    balance: savedSession?.account?.balance ?? DEFAULT_INITIAL_BALANCE,
+    initialBalance: savedSession?.account?.initialBalance ?? DEFAULT_INITIAL_BALANCE,
+    orderMode: savedSession?.account?.orderMode || 'qty',
+    defaultQty: savedSession?.account?.defaultQty ?? 0.05,
+    defaultAmount: savedSession?.account?.defaultAmount ?? 1000
   })
 
   const orders = reactive([])
   const positions = reactive([])
   const trades = reactive([])
+  const barReviews = reactive({})
+  const coachFeedbacks = reactive({})
+  const mistakes = reactive({})
+  assignReactiveArray(orders, savedSession?.orders)
+  assignReactiveArray(positions, savedSession?.positions)
+  assignReactiveArray(trades, savedSession?.trades)
+  assignReactiveObject(barReviews, savedSession?.barReviews)
+  assignReactiveObject(coachFeedbacks, savedSession?.coachFeedbacks)
+  assignReactiveObject(mistakes, savedSession?.mistakes)
 
   const realizedPnL = computed(() => trades.reduce((s, t) => s + t.pnl, 0))
 
@@ -88,9 +253,50 @@ export function useChart() {
   })
 
   const equity = computed(() => account.balance + unrealizedPnL.value)
+  const currentReviewKey = computed(() => currentBar.value ? String(currentBar.value.time) : '')
+  const currentReview = computed(() => {
+    const key = currentReviewKey.value
+    return key && barReviews[key] ? { ...blankReview(), ...barReviews[key] } : blankReview()
+  })
+  const currentCoachFeedback = computed(() => {
+    const key = currentReviewKey.value
+    return key && coachFeedbacks[key] ? coachFeedbacks[key] : null
+  })
+  const currentMistake = computed(() => {
+    const key = currentReviewKey.value
+    return key && mistakes[key] ? mistakes[key] : null
+  })
+  const selectedTrade = computed(() => trades.find(t => t.id === selectedTradeId.value) || null)
+  const reviewStats = computed(() => {
+    const records = Object.values(barReviews)
+    return {
+      total: records.length,
+      reviewedCurrent: Boolean(currentReviewKey.value && barReviews[currentReviewKey.value]),
+      tradePlans: countBy(records, 'tradePlan'),
+      marketStates: countBy(records, 'marketState'),
+      barTypes: countBy(records, 'barType'),
+      alwaysIn: countBy(records, 'alwaysIn'),
+      signalQuality: countBy(records, 'signalQuality')
+    }
+  })
+  const sessionReport = computed(() => {
+    const reviewRecords = Object.values(barReviews)
+    return {
+      reviewedBars: reviewRecords.length,
+      totalVisibleBars: replayIndex.value + 1,
+      totalBars: allBars.value.length,
+      reviewRate: replayIndex.value >= 0 ? reviewRecords.length / (replayIndex.value + 1) : 0,
+      reviewStats: reviewStats.value,
+      tradeStats: summarizeTrades(trades),
+      recentTrades: trades.slice().reverse().slice(0, 12),
+      openPositions: positions.length,
+      pendingOrders: orders.length,
+      mistakeCount: Object.keys(mistakes).length
+    }
+  })
 
-  let orderIdSeq = 1
-  let positionIdSeq = 1
+  let orderIdSeq = nextNumericId(orders, 'ord-')
+  let positionIdSeq = nextNumericId(positions, 'pos-')
 
   // ---------- Chart 初始化 ----------
   function initChart(container) {
@@ -98,14 +304,15 @@ export function useChart() {
     if (chart) {
       try { chart.destroy() } catch (e) {}
       chart = null
+      ema20IndicatorId = null
     }
     // 防御性：清空容器内可能残留的 canvas（来自旧 Chart 实例）
     while (container.firstChild) container.removeChild(container.firstChild)
 
     chart = new Chart({
       container,
-      symbol,
-      timeframe,
+      symbol: symbol.value,
+      timeframe: timeframe.value,
       datafeed,
       theme: 'dark',
       chartType: 'candlestick',
@@ -156,10 +363,13 @@ export function useChart() {
       showContextMenu: true,
       draggableOrderLines: true,
       contextMenuItems: (price) => [
+        { label: `复制价格 ${price.toFixed(2)}`, action: 'copy-price' },
         { label: `市价买入 @ ${price.toFixed(2)}`, action: 'market-buy' },
         { label: `市价卖出 @ ${price.toFixed(2)}`, action: 'market-sell' },
         { label: `限价买入 @ ${price.toFixed(2)}`, action: 'limit-buy', separator: true },
         { label: `限价卖出 @ ${price.toFixed(2)}`, action: 'limit-sell' },
+        { label: `突破买入 @ ${price.toFixed(2)}`, action: 'breakout-buy', separator: true },
+        { label: `突破卖出 @ ${price.toFixed(2)}`, action: 'breakout-sell' },
         { label: `止损单 @ ${price.toFixed(2)}`, action: 'stop-order', separator: true },
         { label: '在此处设置警报', action: 'alert' }
       ]
@@ -170,22 +380,7 @@ export function useChart() {
     })
 
     chart.on('orderLineMoved', ({ id, price }) => {
-      const order = orders.find(o => o.id === id)
-      if (order && order.status === 'pending') {
-        const newPrice = +price.toFixed(2)
-        order.price = newPrice
-        // 同步回持仓上的 tp / sl 字段
-        if (order.type === 'tp' || order.type === 'sl') {
-          const pos = positions.find(p => p.id === order.positionId)
-          if (pos) {
-            if (order.type === 'tp') pos.tp = newPrice
-            else pos.sl = newPrice
-            chart.updateOrderLine(id, { price: newPrice, label: `${order.type === 'tp' ? '止盈' : '止损'} ${order.quantity}` })
-          }
-        } else {
-          chart.updateOrderLine(id, { price: newPrice, label: orderLabel(order) })
-        }
-      }
+      updateOrderPrice(id, price)
     })
 
     chart.on('drawingAdded', () => {
@@ -195,25 +390,210 @@ export function useChart() {
     chart.on('drawingRemoved', () => {
       drawingsCount.value = chart.getDrawings().length
     })
+    chart.on('drawingSelected', () => {
+      activeDrawingTool.value = null
+    })
 
     chartReady.value = true
+    ensureCoreIndicators()
+    restoreChartDecorations()
+  }
+
+  function ensureCoreIndicators() {
+    if (!chart || ema20IndicatorId) return
+    ema20IndicatorId = chart.addIndicator(ema, {
+      period: 20,
+      color: '#f0b429'
+    })
   }
 
   // ---------- 回放控制 ----------
+  function futurePaddingBars() {
+    const last = allBars.value[replayIndex.value]
+    if (!last) return []
+    const step = timeframeSeconds(timeframe.value)
+    return Array.from({ length: FUTURE_PADDING_BARS }, (_, i) => ({
+      time: last.time + step * (i + 1),
+      open: last.close,
+      high: last.close,
+      low: last.close,
+      close: last.close,
+      volume: 0,
+      futurePadding: true
+    }))
+  }
+
+  function replayDisplayBars() {
+    return [
+      ...allBars.value.slice(0, replayIndex.value + 1),
+      ...futurePaddingBars()
+    ]
+  }
+
+  function renderReplayWindow() {
+    if (!chart) return
+    const drawings = typeof chart.getDrawings === 'function' ? chart.getDrawings() : []
+    chart.setData(replayDisplayBars())
+    const afterDrawings = typeof chart.getDrawings === 'function' ? chart.getDrawings() : []
+    if (drawings.length && !afterDrawings.length && typeof chart.loadDrawings === 'function') {
+      chart.loadDrawings(drawings)
+      drawingsCount.value = drawings.length
+    }
+    refreshBarCountMarkers()
+    restoreOrderLines()
+    refreshPositionOverlays()
+  }
+
   function replayNext() {
     if (!canReplayNext.value || !chart) return
     replayIndex.value += 1
-    chart.updateBar(allBars[replayIndex.value])
+    renderReplayWindow()
     matchPendingOrders()
     refreshPositionOverlays()
+    saveSession()
+  }
+
+  function replayPrev() {
+    if (!canReplayPrev.value || !chart) return
+    stopAutoPlay()
+    replayIndex.value -= 1
+    renderReplayWindow()
+    saveSession()
   }
 
   function replayReset() {
     if (!chart) return
     stopAutoPlay()
-    replayIndex.value = initialVisible - 1
-    chart.setData(allBars.slice(0, initialVisible))
-    refreshPositionOverlays()
+    replayIndex.value = visibleStartIndex.value
+    renderReplayWindow()
+    saveSession()
+  }
+
+  async function importCsvFile(file, options = {}) {
+    const text = await file.text()
+    const bars = parseCsvBars(text)
+    const inferred = inferDatasetMeta(file.name, bars)
+    applyDataset({
+      bars,
+      symbol: options.symbol || inferred.symbol,
+      timeframe: options.timeframe || inferred.timeframe,
+      source: 'csv',
+      name: file.name || 'CSV导入'
+    })
+    sessionMessage.value = `已导入 ${bars.length} 根K线: ${file.name}`
+  }
+
+  function applyDataset(dataset) {
+    stopAutoPlay()
+    allBars.value = dataset.bars
+    symbol.value = dataset.symbol || 'IMPORTED'
+    timeframe.value = dataset.timeframe || inferTimeframe(dataset.bars)
+    dataSource.value = dataset.source || 'custom'
+    datasetName.value = dataset.name || '未命名数据'
+    replayIndex.value = visibleStartIndex.value
+    resetTradingState()
+    if (chart) {
+      renderReplayWindow()
+    }
+    saveSession()
+  }
+
+  async function loadLatestBtcData(nextTimeframe = timeframe.value || '5m') {
+    stopAutoPlay()
+    isLoadingData.value = true
+    dataError.value = ''
+    sessionMessage.value = `正在加载 BTCUSDT ${nextTimeframe} 最新K线...`
+    try {
+      const dataset = await fetchLatestBtcBars({ timeframe: nextTimeframe, targetCount: 3000 })
+      applyDataset(dataset)
+      sessionMessage.value = `已加载 BTCUSDT ${nextTimeframe} 最新K线: ${dataset.bars.length} 根`
+    } catch (err) {
+      dataError.value = err?.message || 'BTC最新K线加载失败'
+      sessionMessage.value = dataError.value
+      throw err
+    } finally {
+      isLoadingData.value = false
+    }
+  }
+
+  async function setTimeframe(nextTimeframe) {
+    if (!nextTimeframe || nextTimeframe === timeframe.value) return
+    if (dataSource.value === 'binance' || symbol.value === 'BTCUSDT') {
+      await loadLatestBtcData(nextTimeframe)
+      return
+    }
+    applyDataset({
+      ...makeDefaultDataset(),
+      timeframe: nextTimeframe,
+      name: `模拟数据 ${nextTimeframe}`,
+      bars: generateMockBars({ timeframe: nextTimeframe, count: 600 })
+    })
+    sessionMessage.value = `已切换模拟数据周期: ${nextTimeframe}`
+  }
+
+  function resetToMockData() {
+    applyDataset(makeDefaultDataset())
+    sessionMessage.value = '已重置为内置模拟数据'
+  }
+
+  function updateCurrentReview(patch) {
+    if (!currentBar.value || !patch || typeof patch !== 'object') return
+    const key = currentReviewKey.value
+    const existing = barReviews[key] || {}
+    barReviews[key] = {
+      ...blankReview(),
+      ...existing,
+      ...patch,
+      barTime: currentBar.value.time,
+      barIndex: replayIndex.value,
+      close: currentBar.value.close,
+      updatedAt: new Date().toISOString()
+    }
+    saveSession()
+  }
+
+  function clearCurrentReview() {
+    const key = currentReviewKey.value
+    if (!key || !barReviews[key]) return
+    delete barReviews[key]
+    saveSession()
+  }
+
+  function runCoachForCurrentBar() {
+    if (!currentBar.value) return
+    const key = currentReviewKey.value
+    const payload = buildCoachPayload({
+      bars: allBars.value,
+      replayIndex: replayIndex.value,
+      review: currentReview.value,
+      trades,
+      positions,
+      selectedTrade: selectedTrade.value
+    })
+    coachFeedbacks[key] = generateLocalCoachFeedback(payload)
+    saveSession()
+  }
+
+  function markCurrentMistake(reason = '') {
+    if (!currentBar.value) return
+    const key = currentReviewKey.value
+    mistakes[key] = {
+      barTime: currentBar.value.time,
+      barIndex: replayIndex.value,
+      close: currentBar.value.close,
+      reason,
+      review: { ...currentReview.value },
+      coachFeedback: currentCoachFeedback.value ? { ...currentCoachFeedback.value } : null,
+      createdAt: new Date().toISOString()
+    }
+    saveSession()
+  }
+
+  function unmarkCurrentMistake() {
+    const key = currentReviewKey.value
+    if (!key || !mistakes[key]) return
+    delete mistakes[key]
+    saveSession()
   }
 
   function startAutoPlay(intervalMs = 400) {
@@ -258,10 +638,23 @@ export function useChart() {
     chart?.setMagnetMode(enabled)
   }
 
+  function deleteSelectedDrawing() {
+    if (!chart || typeof chart.getSelectedDrawing !== 'function') return false
+    const selected = chart.getSelectedDrawing()
+    if (!selected?.id) return false
+    chart.removeDrawing(selected.id)
+    drawingsCount.value = chart.getDrawings?.().length || 0
+    saveSession()
+    return true
+  }
+
   // ---------- 交易：右键/+ 按钮触发 ----------
   function onTradeRequested({ side, price, type, action }) {
     const a = action || `${type}-${side}`
     switch (a) {
+      case 'copy-price':
+        copyPrice(price)
+        break
       case 'market-buy':
         openMarketPosition('long')
         break
@@ -273,6 +666,12 @@ export function useChart() {
         break
       case 'limit-sell':
         placeLimitOrder('sell', price)
+        break
+      case 'breakout-buy':
+        placeBreakoutOrder('buy', price)
+        break
+      case 'breakout-sell':
+        placeBreakoutOrder('sell', price)
         break
       case 'stop-order': {
         const cur = currentBar.value?.close ?? price
@@ -294,27 +693,78 @@ export function useChart() {
 
   // ---------- 持仓/订单 helpers ----------
   function defaultQty() {
-    return 0.05
+    if (!currentBar.value) return Number(account.defaultQty) || 0.05
+    if (account.orderMode === 'amount') {
+      const amount = Number(account.defaultAmount)
+      return amount > 0 ? +(amount / currentBar.value.close).toFixed(6) : 0.05
+    }
+    const qty = Number(account.defaultQty)
+    return qty > 0 ? qty : 0.05
   }
 
   function orderLabel(order) {
     const sideTxt = order.side === 'buy' ? '买' : '卖'
-    const typeTxt = order.type === 'limit' ? '限价' : '止损'
+    const typeTxt = order.type === 'limit' ? '限价' : order.type === 'breakout' ? '突破' : '止损'
     return `${typeTxt}${sideTxt} ${order.quantity}`
+  }
+
+  function orderLinePayload(order) {
+    return {
+      id: order.id,
+      price: order.price,
+      type: order.type,
+      side: order.side,
+      label: order.type === 'tp' ? `止盈 ${order.quantity}` : order.type === 'sl' ? `止损 ${order.quantity}` : orderLabel(order),
+      quantity: order.quantity
+    }
+  }
+
+  function addOrReplaceOrderLine(order) {
+    if (!chart || order.status !== 'pending') return
+    chart.removeOrderLine?.(order.id)
+    chart.addOrderLine(orderLinePayload(order))
+  }
+
+  async function copyPrice(price) {
+    const text = Number(price).toFixed(2)
+    try {
+      await navigator.clipboard.writeText(text)
+      sessionMessage.value = `已复制价格: ${text}`
+    } catch (err) {
+      sessionMessage.value = `复制失败，请手动复制: ${text}`
+    }
+  }
+
+  function updateAccountSettings(patch) {
+    if (!patch || typeof patch !== 'object') return
+    const initialBalance = Number(patch.initialBalance)
+    if (Number.isFinite(initialBalance) && initialBalance > 0) {
+      const delta = initialBalance - account.initialBalance
+      account.initialBalance = initialBalance
+      account.balance += delta
+    }
+    if (patch.orderMode === 'qty' || patch.orderMode === 'amount') account.orderMode = patch.orderMode
+    const defaultQtyValue = Number(patch.defaultQty)
+    if (Number.isFinite(defaultQtyValue) && defaultQtyValue > 0) account.defaultQty = defaultQtyValue
+    const defaultAmountValue = Number(patch.defaultAmount)
+    if (Number.isFinite(defaultAmountValue) && defaultAmountValue > 0) account.defaultAmount = defaultAmountValue
+    saveSession()
   }
 
   function openMarketPosition(side, qty = defaultQty()) {
     if (!currentBar.value) return
     const entryPrice = currentBar.value.close
     const id = `pos-${positionIdSeq++}`
-    positions.push({
+    const pos = {
       id,
       side,
       entryPrice,
       quantity: qty,
       openTime: currentBar.value.time
-    })
+    }
+    positions.push(pos)
     refreshPositionOverlays()
+    saveSession()
   }
 
   function placeLimitOrder(side, price, qty = defaultQty()) {
@@ -329,14 +779,24 @@ export function useChart() {
       createdAt: currentBar.value?.time
     }
     orders.push(order)
-    chart?.addOrderLine({
+    addOrReplaceOrderLine(order)
+    saveSession()
+  }
+
+  function placeBreakoutOrder(side, price, qty = defaultQty()) {
+    const id = `ord-${orderIdSeq++}`
+    const order = {
       id,
-      price: order.price,
-      type: 'limit',
       side,
-      label: orderLabel(order),
-      quantity: qty
-    })
+      type: 'breakout',
+      price: +price.toFixed(2),
+      quantity: qty,
+      status: 'pending',
+      createdAt: currentBar.value?.time
+    }
+    orders.push(order)
+    addOrReplaceOrderLine(order)
+    saveSession()
   }
 
   function placeStopOrder(side, price, qty = defaultQty()) {
@@ -351,14 +811,27 @@ export function useChart() {
       createdAt: currentBar.value?.time
     }
     orders.push(order)
-    chart?.addOrderLine({
-      id,
-      price: order.price,
-      type: 'stop',
-      side,
-      label: orderLabel(order),
-      quantity: qty
-    })
+    addOrReplaceOrderLine(order)
+    saveSession()
+  }
+
+  function updateOrderPrice(orderId, price) {
+    const order = orders.find(o => o.id === orderId)
+    const newPrice = Number(price)
+    if (!order || order.status !== 'pending' || !Number.isFinite(newPrice) || newPrice <= 0) return
+    order.price = +newPrice.toFixed(2)
+
+    if (order.type === 'tp' || order.type === 'sl') {
+      const pos = positions.find(p => p.id === order.positionId)
+      if (pos) {
+        if (order.type === 'tp') pos.tp = order.price
+        else pos.sl = order.price
+      }
+    }
+
+    chart?.updateOrderLine?.(order.id, orderLinePayload(order))
+    refreshPositionOverlays()
+    saveSession()
   }
 
   /**
@@ -392,14 +865,8 @@ export function useChart() {
     orders.push(order)
     pos.tpOrderId = id
     pos.tp = order.price
-    chart?.addOrderLine({
-      id,
-      price: order.price,
-      type: 'tp',
-      side: order.side,
-      label: `止盈 ${pos.quantity}`,
-      quantity: pos.quantity
-    })
+    addOrReplaceOrderLine(order)
+    saveSession()
   }
 
   /**
@@ -432,14 +899,8 @@ export function useChart() {
     orders.push(order)
     pos.slOrderId = id
     pos.sl = order.price
-    chart?.addOrderLine({
-      id,
-      price: order.price,
-      type: 'sl',
-      side: order.side,
-      label: `止损 ${pos.quantity}`,
-      quantity: pos.quantity
-    })
+    addOrReplaceOrderLine(order)
+    saveSession()
   }
 
   /**
@@ -460,13 +921,29 @@ export function useChart() {
       pos.slOrderId = null
       pos.sl = null
     }
+    saveSession()
   }
 
   function cancelOrder(orderId) {
     const idx = orders.findIndex(o => o.id === orderId)
     if (idx === -1) return
+    const order = orders[idx]
+    if (order.positionId && (order.type === 'tp' || order.type === 'sl')) {
+      const pos = positions.find(p => p.id === order.positionId)
+      if (pos) {
+        if (order.type === 'tp') {
+          pos.tpOrderId = null
+          pos.tp = null
+        } else {
+          pos.slOrderId = null
+          pos.sl = null
+        }
+      }
+    }
     orders.splice(idx, 1)
     chart?.removeOrderLine(orderId)
+    refreshPositionOverlays()
+    saveSession()
   }
 
   function closePosition(positionId, closePriceOverride) {
@@ -477,17 +954,20 @@ export function useChart() {
     const dir = p.side === 'long' ? 1 : -1
     const pnl = (closePrice - p.entryPrice) * p.quantity * dir
     account.balance += pnl
-    trades.push({
+    const trade = {
       id: `trade-${trades.length + 1}`,
       side: p.side,
       entryPrice: p.entryPrice,
       closePrice,
       quantity: p.quantity,
+      notional: p.entryPrice * p.quantity,
       pnl,
       openTime: p.openTime,
       closeTime: currentBar.value?.time,
       exitReason: p.exitReason || 'manual'
-    })
+    }
+    trades.push(trade)
+    selectedTradeId.value = trade.id
     // 移除该持仓的 TP/SL 委托线
     if (p.tpOrderId) {
       const oi = orders.findIndex(o => o.id === p.tpOrderId)
@@ -501,6 +981,7 @@ export function useChart() {
     }
     positions.splice(idx, 1)
     refreshPositionOverlays()
+    saveSession()
   }
 
   function closeAllPositions() {
@@ -550,7 +1031,7 @@ export function useChart() {
       let triggered = false
       if (order.type === 'limit') {
         triggered = order.side === 'buy' ? low <= order.price : high >= order.price
-      } else if (order.type === 'stop') {
+      } else if (order.type === 'stop' || order.type === 'breakout') {
         triggered = order.side === 'buy' ? high >= order.price : low <= order.price
       }
       if (triggered) {
@@ -563,14 +1044,16 @@ export function useChart() {
 
   function openMarketPositionAt(side, qty, price) {
     const id = `pos-${positionIdSeq++}`
-    positions.push({
+    const pos = {
       id,
       side,
       entryPrice: price,
       quantity: qty,
       openTime: currentBar.value?.time
-    })
+    }
+    positions.push(pos)
     refreshPositionOverlays()
+    saveSession()
   }
 
   function refreshPositionOverlays() {
@@ -593,11 +1076,137 @@ export function useChart() {
     chart.setPositionOverlays(overlays)
   }
 
+  function resetTradingState() {
+    if (chart) {
+      for (const order of orders) {
+        chart.removeOrderLine?.(order.id)
+      }
+    }
+    account.balance = DEFAULT_INITIAL_BALANCE
+    account.initialBalance = DEFAULT_INITIAL_BALANCE
+    account.orderMode = 'qty'
+    account.defaultQty = 0.05
+    account.defaultAmount = 1000
+    assignReactiveArray(orders, [])
+    assignReactiveArray(positions, [])
+    assignReactiveArray(trades, [])
+    assignReactiveObject(barReviews, {})
+    assignReactiveObject(coachFeedbacks, {})
+    assignReactiveObject(mistakes, {})
+    orderIdSeq = 1
+    positionIdSeq = 1
+    chart?.setPositionOverlays?.([])
+    selectedTradeId.value = ''
+  }
+
+  function resetAccount(initialBalance = DEFAULT_INITIAL_BALANCE) {
+    const nextInitial = Number(initialBalance) > 0 ? Number(initialBalance) : DEFAULT_INITIAL_BALANCE
+    if (chart) {
+      for (const order of orders) chart.removeOrderLine?.(order.id)
+    }
+    account.balance = nextInitial
+    account.initialBalance = nextInitial
+    assignReactiveArray(orders, [])
+    assignReactiveArray(positions, [])
+    assignReactiveArray(trades, [])
+    orderIdSeq = 1
+    positionIdSeq = 1
+    selectedTradeId.value = ''
+    chart?.setPositionOverlays?.([])
+    saveSession()
+  }
+
+  function deleteTrade(tradeId) {
+    const idx = trades.findIndex(t => t.id === tradeId)
+    if (idx === -1) return
+    const trade = trades[idx]
+    account.balance -= Number(trade.pnl || 0)
+    trades.splice(idx, 1)
+    if (selectedTradeId.value === tradeId) selectedTradeId.value = ''
+    saveSession()
+  }
+
+  function restoreOrderLines() {
+    if (!chart) return
+    chart.clearOrderLines?.()
+    for (const order of orders) {
+      if (order.status !== 'pending') continue
+      addOrReplaceOrderLine(order)
+    }
+  }
+
+  function restoreChartDecorations() {
+    if (!chart) return
+    ensureCoreIndicators()
+    chart.setData(replayDisplayBars())
+    refreshBarCountMarkers()
+    restoreOrderLines()
+    refreshPositionOverlays()
+  }
+
+  function refreshBarCountMarkers() {
+    if (!chart || typeof chart.setBarMarkers !== 'function') return
+    const markers = allBars.value
+      .slice(0, replayIndex.value + 1)
+      .map((bar, idx) => ({ bar, idx }))
+      .filter(({ idx }) => idx === 0 || idx === replayIndex.value || (idx + 1) % BAR_COUNT_STEP === 0)
+      .map(({ bar, idx }) => ({
+        time: bar.time,
+        label: `B${idx + 1}`,
+        color: idx === replayIndex.value ? '#f0b429' : '#58a6ff',
+        position: 'above'
+      }))
+    chart.setBarMarkers(markers)
+  }
+
+  function selectTradeForReview(tradeId) {
+    selectedTradeId.value = tradeId || ''
+    saveSession()
+  }
+
+  function saveSession() {
+    safeWriteSession({
+      savedAt: new Date().toISOString(),
+      dataset: {
+        symbol: symbol.value,
+        timeframe: timeframe.value,
+        source: dataSource.value,
+        name: datasetName.value,
+        bars: allBars.value
+      },
+      replayIndex: replayIndex.value,
+      account: { ...account },
+      orders: orders.map(o => ({ ...o })),
+      positions: positions.map(p => ({ ...p })),
+      trades: trades.map(t => ({ ...t })),
+      barReviews: Object.fromEntries(
+        Object.entries(barReviews).map(([key, value]) => [key, { ...value }])
+      ),
+      coachFeedbacks: Object.fromEntries(
+        Object.entries(coachFeedbacks).map(([key, value]) => [key, { ...value }])
+      ),
+      mistakes: Object.fromEntries(
+        Object.entries(mistakes).map(([key, value]) => [key, { ...value }])
+      ),
+      selectedTradeId: selectedTradeId.value
+    })
+  }
+
+  const sessionInfo = computed(() => ({
+    name: datasetName.value,
+    source: dataSource.value,
+    barsCount: allBars.value.length,
+    symbol: symbol.value,
+    timeframe: timeframe.value,
+    message: sessionMessage.value
+  }))
+
   function destroy() {
     stopAutoPlay()
     if (chart) {
       chart.destroy()
       chart = null
+      ema20IndicatorId = null
     }
   }
 
@@ -605,15 +1214,27 @@ export function useChart() {
     chartReady,
     symbol,
     timeframe,
+    sessionInfo,
+    sessionMessage,
+    dataError,
+    isLoadingData,
+    timeframeOptions: BTC_TIMEFRAMES,
     initChart,
     destroy,
+    importCsvFile,
+    loadLatestBtcData,
+    setTimeframe,
+    resetToMockData,
+    saveSession,
 
     replayIndex,
     replayMax,
     canReplayNext,
+    canReplayPrev,
     isAutoPlaying,
     currentBar,
     replayNext,
+    replayPrev,
     replayReset,
     startAutoPlay,
     stopAutoPlay,
@@ -623,23 +1244,43 @@ export function useChart() {
     setDrawingTool,
     clearDrawings,
     setMagnetMode,
+    deleteSelectedDrawing,
 
     account,
     orders,
     positions,
     trades,
+    selectedTrade,
+    selectedTradeId,
+    barReviews,
+    currentReview,
+    currentCoachFeedback,
+    currentMistake,
+    reviewStats,
+    sessionReport,
     realizedPnL,
     unrealizedPnL,
     equity,
     openMarketPosition,
     placeLimitOrder,
+    placeBreakoutOrder,
     placeStopOrder,
+    updateOrderPrice,
+    updateAccountSettings,
+    resetAccount,
     setTakeProfit,
     setStopLoss,
     removeTPSL,
     cancelOrder,
     cancelAllOrders,
     closePosition,
-    closeAllPositions
+    closeAllPositions,
+    deleteTrade,
+    selectTradeForReview,
+    updateCurrentReview,
+    clearCurrentReview,
+    runCoachForCurrentBar,
+    markCurrentMistake,
+    unmarkCurrentMistake
   }
 }

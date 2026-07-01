@@ -1,11 +1,14 @@
 <script setup>
-import { ref, computed, defineProps, defineEmits } from 'vue'
+import { ref, watch, computed } from 'vue'
 
 const props = defineProps({
   account: { type: Object, required: true },
   orders: { type: Array, required: true },
   positions: { type: Array, required: true },
   trades: { type: Array, required: true },
+  selectedTrade: { type: Object, default: null },
+  selectedTradeId: { type: String, default: '' },
+  feedback: { type: Object, default: null },
   realized: { type: Number, required: true },
   unrealized: { type: Number, required: true },
   equity: { type: Number, required: true },
@@ -15,6 +18,11 @@ const props = defineProps({
 const emit = defineEmits([
   'market-buy',
   'market-sell',
+  'update-account',
+  'limit-order',
+  'stop-order',
+  'breakout-order',
+  'update-order-price',
   'close-position',
   'close-all',
   'cancel-order',
@@ -22,11 +30,36 @@ const emit = defineEmits([
   'set-tp',
   'set-sl',
   'remove-tp',
-  'remove-sl'
+  'remove-sl',
+  'select-trade',
+  'review-trade',
+  'delete-trade',
+  'reset-account'
 ])
 
 const currentPrice = computed(() => props.currentBar?.close?.toFixed(2) ?? '-')
 const pnlClass = (v) => (v > 0 ? 'pos' : v < 0 ? 'neg' : '')
+const pendingPrice = ref('')
+const reviewCollapsed = ref(false)
+const accountDraft = ref({
+  initialBalance: props.account.initialBalance,
+  orderMode: props.account.orderMode || 'qty',
+  defaultQty: props.account.defaultQty || 0.05,
+  defaultAmount: props.account.defaultAmount || 1000
+})
+
+watch(() => props.account, (account) => {
+  accountDraft.value = {
+    initialBalance: account.initialBalance,
+    orderMode: account.orderMode || 'qty',
+    defaultQty: account.defaultQty || 0.05,
+    defaultAmount: account.defaultAmount || 1000
+  }
+}, { deep: true })
+
+watch(() => props.selectedTradeId, () => {
+  reviewCollapsed.value = false
+})
 
 function fmt(v, dp = 2) {
   if (v === undefined || v === null || isNaN(v)) return '-'
@@ -40,6 +73,44 @@ function fmtTime(time) {
   const mm = String(d.getUTCMinutes()).padStart(2, '0')
   const day = `${d.getUTCMonth() + 1}/${d.getUTCDate()}`
   return `${day} ${hh}:${mm}`
+}
+
+function pendingOrderPrice() {
+  const raw = pendingPrice.value || props.currentBar?.close
+  const price = Number(raw)
+  return Number.isFinite(price) && price > 0 ? price : null
+}
+
+function setPendingFromCurrent() {
+  if (props.currentBar?.close) pendingPrice.value = fmt(props.currentBar.close)
+}
+
+function placePending(type, side) {
+  const price = pendingOrderPrice()
+  if (!price) return
+  const eventName = type === 'limit' ? 'limit-order' : type === 'breakout' ? 'breakout-order' : 'stop-order'
+  emit(eventName, side, price)
+}
+
+function updateOrderFromInput(orderId, value) {
+  const price = Number(value)
+  if (Number.isFinite(price) && price > 0) {
+    emit('update-order-price', orderId, price)
+  }
+}
+
+function applyAccountSettings() {
+  emit('update-account', {
+    initialBalance: Number(accountDraft.value.initialBalance),
+    orderMode: accountDraft.value.orderMode,
+    defaultQty: Number(accountDraft.value.defaultQty),
+    defaultAmount: Number(accountDraft.value.defaultAmount)
+  })
+}
+
+function resetAccount() {
+  const initial = Number(accountDraft.value.initialBalance) || 1000
+  emit('reset-account', initial)
 }
 
 function positionPnL(p) {
@@ -93,6 +164,7 @@ function orderKindLabel(o) {
   if (o.type === 'tp') return '止盈'
   if (o.type === 'sl') return '止损'
   if (o.type === 'limit') return `限${o.side === 'buy' ? '买' : '卖'}`
+  if (o.type === 'breakout') return `突破${o.side === 'buy' ? '买' : '卖'}`
   if (o.type === 'stop') return `止${o.side === 'buy' ? '买' : '卖'}`
   return '委托'
 }
@@ -128,6 +200,28 @@ function orderKindHint(o) {
         <span class="lbl">权益</span>
         <span class="val" :class="pnlClass(equity - account.initialBalance)">${{ fmt(equity) }}</span>
       </div>
+      <div class="account-editor">
+        <label>
+          <span>初始资金</span>
+          <input v-model="accountDraft.initialBalance" type="number" step="100" @change="applyAccountSettings" />
+        </label>
+        <button class="reset-account" @click="resetAccount">重置账户</button>
+        <label>
+          <span>下单模式</span>
+          <select v-model="accountDraft.orderMode" @change="applyAccountSettings">
+            <option value="qty">手数</option>
+            <option value="amount">金额</option>
+          </select>
+        </label>
+        <label v-if="accountDraft.orderMode === 'qty'">
+          <span>默认手数</span>
+          <input v-model="accountDraft.defaultQty" type="number" step="0.001" @change="applyAccountSettings" />
+        </label>
+        <label v-else>
+          <span>下单金额</span>
+          <input v-model="accountDraft.defaultAmount" type="number" step="100" @change="applyAccountSettings" />
+        </label>
+      </div>
     </div>
 
     <!-- 快速下单 -->
@@ -137,9 +231,28 @@ function orderKindHint(o) {
         <button class="primary" @click="emit('market-buy')">市价做多</button>
         <button class="danger" @click="emit('market-sell')">市价做空</button>
       </div>
+      <div class="pending-trade">
+        <div class="price-row">
+          <input
+            v-model="pendingPrice"
+            type="number"
+            step="0.01"
+            placeholder="挂单价格"
+            @focus="setPendingFromCurrent"
+          />
+          <button class="mini" @click="setPendingFromCurrent">当前价</button>
+        </div>
+        <div class="quick-trade">
+          <button class="primary" @click="placePending('limit', 'buy')">限价买入</button>
+          <button class="danger" @click="placePending('limit', 'sell')">限价卖出</button>
+          <button class="primary ghost" @click="placePending('breakout', 'buy')">突破买入</button>
+          <button class="danger ghost" @click="placePending('breakout', 'sell')">突破卖出</button>
+          <button class="primary ghost" @click="placePending('stop', 'buy')">止损买入</button>
+          <button class="danger ghost" @click="placePending('stop', 'sell')">止损卖出</button>
+        </div>
+      </div>
       <div class="hint">
-        💡 右键图表 → 限价/止损下单<br />
-        💡 拖动委托线可修改价格
+        下单后不会自动生成止盈/止损；在持仓里设置 TP/SL 后，图表上会出现可拖动的对应线。
       </div>
     </div>
 
@@ -214,13 +327,22 @@ function orderKindHint(o) {
               {{ orderKindLabel(o) }}
             </span>
             <span class="qty">{{ o.quantity }}</span>
-            <span class="px">@ {{ fmt(o.price) }}</span>
+            <label class="order-price">
+              @
+              <input
+                type="number"
+                step="0.01"
+                :value="fmt(o.price)"
+                @change="(e) => updateOrderFromInput(o.id, e.target.value)"
+              />
+            </label>
             <span class="status">待成交</span>
           </div>
           <div class="line2">
             <span class="meta">{{ orderKindHint(o) }}</span>
-            <button v-if="!o.positionId" class="mini" @click="emit('cancel-order', o.id)">撤单</button>
-            <span v-else class="meta">关联持仓</span>
+            <button class="mini" @click="emit('cancel-order', o.id)">
+              {{ o.positionId ? '取消' : '撤单' }}
+            </button>
           </div>
         </div>
       </div>
@@ -231,7 +353,12 @@ function orderKindHint(o) {
       <div class="title">成交历史 ({{ trades.length }})</div>
       <div v-if="!trades.length" class="empty">无成交记录</div>
       <div v-else class="list">
-        <div v-for="t in trades.slice().reverse().slice(0, 8)" :key="t.id" class="item">
+        <div
+          v-for="t in trades.slice().reverse().slice(0, 12)"
+          :key="t.id"
+          :class="['item', 'trade-item', { selected: selectedTradeId === t.id }]"
+          @click="emit('select-trade', t.id)"
+        >
           <div class="line1">
             <span class="side" :class="t.side">{{ t.side === 'long' ? '多' : '空' }}</span>
             <span class="qty">{{ t.quantity }}</span>
@@ -242,8 +369,69 @@ function orderKindHint(o) {
             <span class="meta" :class="t.exitReason === '止盈' ? 'pos' : t.exitReason === '止损' ? 'neg' : ''">
               {{ t.exitReason }} 平仓
             </span>
+            <div class="trade-actions">
+              <button class="mini primary" @click.stop="emit('review-trade', t.id)">点评</button>
+              <button class="mini danger" @click.stop="emit('delete-trade', t.id)">删除</button>
+            </div>
+          </div>
+          <div v-else class="line2">
+            <span class="meta">手动平仓</span>
+            <div class="trade-actions">
+              <button class="mini primary" @click.stop="emit('review-trade', t.id)">点评</button>
+              <button class="mini danger" @click.stop="emit('delete-trade', t.id)">删除</button>
+            </div>
           </div>
         </div>
+      </div>
+
+      <div
+        v-if="selectedTrade && feedback && feedback.payloadPreview?.selectedTradeId === selectedTrade.id"
+        class="trade-review"
+      >
+        <div class="review-head">
+          <div>
+            <div class="title">交易点评</div>
+            <div class="review-subtitle">基于该笔入场点之后的市场状态、力量变化和价格行为结构</div>
+          </div>
+          <div class="review-actions">
+            <span v-if="feedback.score !== undefined" class="score-pill">评分 {{ feedback.score }}</span>
+            <button class="mini" @click="reviewCollapsed = !reviewCollapsed">
+              {{ reviewCollapsed ? '展开' : '收起' }}
+            </button>
+          </div>
+        </div>
+        <div class="review-summary">
+          <span class="summary-label">结论</span>
+          {{ feedback.summary }}
+        </div>
+        <template v-if="!reviewCollapsed">
+          <div v-if="feedback.sections?.length" class="review-sections">
+            <div v-for="section in feedback.sections" :key="section.title" class="review-card">
+              <div class="review-title">{{ section.title }}</div>
+              <p v-if="section.body">{{ section.body }}</p>
+              <ul v-if="section.items?.length">
+                <li v-for="item in section.items" :key="item">{{ item }}</li>
+              </ul>
+            </div>
+          </div>
+          <div v-if="feedback.issues?.length" class="review-card warn-card">
+            <div class="review-title">需要修正</div>
+            <ul>
+              <li v-for="issue in feedback.issues" :key="issue.title + issue.detail">
+                <strong>{{ issue.title }}</strong>: {{ issue.detail }}
+              </li>
+            </ul>
+          </div>
+          <div v-if="feedback.suggestions?.length" class="review-card action-card">
+            <div class="review-title">操作建议</div>
+            <ul>
+              <li v-for="item in feedback.suggestions" :key="item">{{ item }}</li>
+            </ul>
+          </div>
+        </template>
+      </div>
+      <div v-else-if="selectedTrade" class="review-empty">
+        已选中交易，点击该笔记录右侧“点评”生成分析。
       </div>
     </div>
   </div>
@@ -299,6 +487,48 @@ function orderKindHint(o) {
   font-weight: 600;
 }
 
+.account-editor {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed #21262d;
+}
+
+.account-editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-size: 11px;
+  color: #8b949e;
+}
+
+.account-editor input,
+.account-editor select {
+  min-width: 0;
+  height: 28px;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+
+.reset-account {
+  align-self: end;
+  min-height: 28px;
+  padding: 4px 8px;
+}
+
+.account-editor .checkbox-line {
+  flex-direction: row;
+  align-items: center;
+  min-height: 28px;
+}
+
+.account-editor .checkbox-line input {
+  width: auto;
+  height: auto;
+}
+
 .lbl {
   color: #8b949e;
 }
@@ -321,6 +551,28 @@ function orderKindHint(o) {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 6px;
+}
+
+.pending-trade {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.price-row {
+  display: flex;
+  gap: 6px;
+}
+
+.price-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+button.ghost {
+  background: #161b22;
 }
 
 .hint {
@@ -353,6 +605,129 @@ function orderKindHint(o) {
   border: 1px solid #21262d;
   border-radius: 6px;
   font-size: 12px;
+}
+
+.trade-item {
+  cursor: pointer;
+}
+
+.trade-item.selected {
+  border-color: #58a6ff;
+  box-shadow: inset 3px 0 0 #1f6feb;
+}
+
+.trade-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.trade-review,
+.review-empty {
+  margin-top: 8px;
+  padding: 10px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+}
+
+.review-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.review-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.review-subtitle {
+  margin-top: 3px;
+  color: #6e7681;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.score-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(240, 180, 41, 0.12);
+  color: #f0b429;
+  border: 1px solid rgba(240, 180, 41, 0.35);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.review-empty {
+  color: #8b949e;
+  font-size: 12px;
+  text-align: center;
+}
+
+.review-summary {
+  margin-top: 8px;
+  color: #c9d1d9;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 8px;
+  background: #161b22;
+  border-radius: 5px;
+  border-left: 3px solid #f0b429;
+}
+
+.summary-label {
+  display: inline-block;
+  margin-right: 6px;
+  color: #f0b429;
+  font-weight: 700;
+}
+
+.review-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.review-card {
+  padding: 8px;
+  background: #161b22;
+  border-left: 3px solid #58a6ff;
+  border-radius: 5px;
+}
+
+.review-card.warn-card {
+  border-left-color: #d29922;
+}
+
+.review-card.action-card {
+  border-left-color: #26a69a;
+}
+
+.review-title {
+  color: #58a6ff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.review-card p,
+.review-card li {
+  color: #c9d1d9;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.review-card ul {
+  margin: 6px 0 0;
+  padding-left: 16px;
 }
 
 .line1 {
@@ -395,6 +770,21 @@ function orderKindHint(o) {
 .px {
   color: #8b949e;
   font-variant-numeric: tabular-nums;
+}
+
+.order-price {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #8b949e;
+  font-variant-numeric: tabular-nums;
+}
+
+.order-price input {
+  width: 90px;
+  min-width: 0;
+  padding: 2px 5px;
+  font-size: 11px;
 }
 
 .pnl {

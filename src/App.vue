@@ -1,9 +1,10 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useChart } from './composables/useChart.js'
 import ReplayBar from './components/ReplayBar.vue'
 import DrawingToolbar from './components/DrawingToolbar.vue'
 import TradePanel from './components/TradePanel.vue'
+import ReportPanel from './components/ReportPanel.vue'
 
 const chartContainer = ref(null)
 
@@ -11,15 +12,24 @@ const {
   // 基本
   symbol,
   timeframe,
+  sessionInfo,
+  timeframeOptions,
+  isLoadingData,
   initChart,
   destroy,
+  importCsvFile,
+  loadLatestBtcData,
+  setTimeframe,
+  resetToMockData,
   // 回放
   replayIndex,
   replayMax,
   canReplayNext,
+  canReplayPrev,
   isAutoPlaying,
   currentBar,
   replayNext,
+  replayPrev,
   replayReset,
   startAutoPlay,
   stopAutoPlay,
@@ -29,23 +39,47 @@ const {
   setDrawingTool,
   clearDrawings,
   setMagnetMode,
+  deleteSelectedDrawing,
   // 交易
   account,
   orders,
   positions,
   trades,
+  selectedTrade,
+  selectedTradeId,
+  currentReview,
+  currentCoachFeedback,
+  sessionReport,
   realizedPnL,
   unrealizedPnL,
   equity,
   openMarketPosition,
+  placeLimitOrder,
+  placeBreakoutOrder,
+  placeStopOrder,
+  updateOrderPrice,
+  updateAccountSettings,
+  resetAccount,
   setTakeProfit,
   setStopLoss,
   removeTPSL,
   cancelOrder,
   cancelAllOrders,
   closePosition,
-  closeAllPositions
+  closeAllPositions,
+  deleteTrade,
+  selectTradeForReview,
+  runCoachForCurrentBar
 } = useChart()
+
+const fileInput = ref(null)
+const importError = ref('')
+const activeRightPanel = ref('trade')
+const selectedTimeframe = ref(timeframe.value)
+
+watch(timeframe, (value) => {
+  selectedTimeframe.value = value
+})
 
 onMounted(async () => {
   // 等容器稳定（两次 rAF 确保布局已 commit）
@@ -65,11 +99,19 @@ function onKey(e) {
   if (e.code === 'Space') {
     e.preventDefault()
     if (canReplayNext.value) replayNext()
+  } else if (e.code === 'ArrowRight') {
+    e.preventDefault()
+    if (canReplayNext.value) replayNext()
+  } else if (e.code === 'ArrowLeft') {
+    e.preventDefault()
+    if (canReplayPrev.value) replayPrev()
   } else if (e.code === 'KeyR') {
     replayReset()
   } else if (e.code === 'KeyP') {
     if (isAutoPlaying.value) stopAutoPlay()
     else startAutoPlay()
+  } else if (e.code === 'Delete' || e.code === 'Backspace') {
+    if (deleteSelectedDrawing()) e.preventDefault()
   }
 }
 
@@ -84,6 +126,51 @@ function onMarketBuy() {
 function onMarketSell() {
   openMarketPosition('short')
 }
+
+function onSelectTrade(tradeId) {
+  selectTradeForReview(tradeId)
+}
+
+function onReviewTrade(tradeId) {
+  selectTradeForReview(tradeId)
+  runCoachForCurrentBar()
+}
+
+async function onTimeframeChange() {
+  importError.value = ''
+  try {
+    await setTimeframe(selectedTimeframe.value)
+  } catch (err) {
+    importError.value = err?.message || '周期切换失败'
+    selectedTimeframe.value = timeframe.value
+  }
+}
+
+async function onLoadLatestBtc() {
+  importError.value = ''
+  try {
+    await loadLatestBtcData(selectedTimeframe.value)
+  } catch (err) {
+    importError.value = err?.message || 'BTC最新K线加载失败'
+  }
+}
+
+function openCsvPicker() {
+  fileInput.value?.click()
+}
+
+async function onCsvSelected(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  importError.value = ''
+  try {
+    await importCsvFile(file)
+  } catch (err) {
+    importError.value = err?.message || 'CSV导入失败'
+  } finally {
+    e.target.value = ''
+  }
+}
 </script>
 
 <template>
@@ -91,15 +178,25 @@ function onMarketSell() {
     <!-- 顶部标题栏 -->
     <header class="header">
       <div class="brand">
-        <span class="logo">📈</span>
-        <span class="name">K线回放交易 Demo</span>
+        <span class="logo">PA</span>
+        <span class="name">价格行为复盘训练</span>
         <span class="sym">{{ symbol }} · {{ timeframe }}</span>
+        <span class="dataset">{{ sessionInfo.name }} · {{ sessionInfo.barsCount }} bars</span>
       </div>
-      <div class="shortcuts">
-        <kbd>Space</kbd> 下一根 ·
-        <kbd>P</kbd> 自动播放 ·
-        <kbd>R</kbd> 重置 ·
-        <kbd>右键</kbd> 画线下单
+      <div class="header-actions">
+        <input ref="fileInput" class="file-input" type="file" accept=".csv,text/csv" @change="onCsvSelected" />
+        <span v-if="importError" class="import-error">{{ importError }}</span>
+        <span v-else class="session-msg">{{ sessionInfo.message }}</span>
+        <select v-model="selectedTimeframe" :disabled="isLoadingData" @change="onTimeframeChange">
+          <option v-for="item in timeframeOptions" :key="item.value" :value="item.value">
+            {{ item.label }}
+          </option>
+        </select>
+        <button :disabled="isLoadingData" @click="onLoadLatestBtc">
+          {{ isLoadingData ? '加载中...' : '加载BTC最新' }}
+        </button>
+        <button @click="openCsvPicker">导入CSV</button>
+        <button @click="resetToMockData">模拟数据</button>
       </div>
     </header>
 
@@ -109,9 +206,11 @@ function onMarketSell() {
         :replay-index="replayIndex"
         :replay-max="replayMax"
         :can-replay-next="canReplayNext"
+        :can-replay-prev="canReplayPrev"
         :is-auto-playing="isAutoPlaying"
         :current-bar="currentBar"
         @next="replayNext"
+        @prev="replayPrev"
         @reset="replayReset"
         @auto-toggle="onAutoToggle"
       />
@@ -125,6 +224,8 @@ function onMarketSell() {
           :active-tool="activeDrawingTool"
           :drawings-count="drawingsCount"
           @select="setDrawingTool"
+          @market-long="onMarketBuy"
+          @market-short="onMarketSell"
           @clear="clearDrawings"
           @toggle-magnet="setMagnetMode"
         />
@@ -137,26 +238,55 @@ function onMarketSell() {
 
       <!-- 右侧：交易面板 -->
       <aside class="sidebar right">
-        <TradePanel
-          :account="account"
-          :orders="orders"
-          :positions="positions"
-          :trades="trades"
-          :realized="realizedPnL"
-          :unrealized="unrealizedPnL"
-          :equity="equity"
-          :current-bar="currentBar"
-          @market-buy="onMarketBuy"
-          @market-sell="onMarketSell"
-          @close-position="closePosition"
-          @close-all="closeAllPositions"
-          @cancel-order="cancelOrder"
-          @cancel-all="cancelAllOrders"
-          @set-tp="setTakeProfit"
-          @set-sl="setStopLoss"
-          @remove-tp="(id) => removeTPSL(id, 'tp')"
-          @remove-sl="(id) => removeTPSL(id, 'sl')"
-        />
+        <div class="right-panel">
+          <div class="panel-tabs">
+            <button :class="{ active: activeRightPanel === 'trade' }" @click="activeRightPanel = 'trade'">
+              交易
+            </button>
+            <button :class="{ active: activeRightPanel === 'report' }" @click="activeRightPanel = 'report'">
+              报告
+            </button>
+          </div>
+
+          <TradePanel
+            v-if="activeRightPanel === 'trade'"
+            :account="account"
+            :orders="orders"
+            :positions="positions"
+            :trades="trades"
+            :selected-trade="selectedTrade"
+            :selected-trade-id="selectedTradeId"
+            :feedback="currentCoachFeedback"
+            :realized="realizedPnL"
+            :unrealized="unrealizedPnL"
+            :equity="equity"
+            :current-bar="currentBar"
+            @update-account="updateAccountSettings"
+            @reset-account="resetAccount"
+            @market-buy="onMarketBuy"
+            @market-sell="onMarketSell"
+            @limit-order="placeLimitOrder"
+            @breakout-order="placeBreakoutOrder"
+            @stop-order="placeStopOrder"
+            @update-order-price="updateOrderPrice"
+            @close-position="closePosition"
+            @select-trade="onSelectTrade"
+            @review-trade="onReviewTrade"
+            @delete-trade="deleteTrade"
+            @close-all="closeAllPositions"
+            @cancel-order="cancelOrder"
+            @cancel-all="cancelAllOrders"
+            @set-tp="setTakeProfit"
+            @set-sl="setStopLoss"
+            @remove-tp="(id) => removeTPSL(id, 'tp')"
+            @remove-sl="(id) => removeTPSL(id, 'sl')"
+          />
+
+          <ReportPanel
+            v-else
+            :report="sessionReport"
+          />
+        </div>
       </aside>
     </div>
   </div>
@@ -181,6 +311,7 @@ function onMarketSell() {
   background: #161b22;
   border: 1px solid #30363d;
   border-radius: 8px;
+  gap: 12px;
 }
 
 .replay-wrap {
@@ -194,7 +325,15 @@ function onMarketSell() {
 }
 
 .logo {
-  font-size: 20px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: #238636;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .name {
@@ -214,21 +353,52 @@ function onMarketSell() {
   font-variant-numeric: tabular-nums;
 }
 
-.shortcuts {
+.dataset {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
   color: #8b949e;
 }
 
-.shortcuts kbd {
-  display: inline-block;
-  padding: 1px 6px;
-  margin: 0 2px;
-  background: #21262d;
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.header-actions select {
+  height: 32px;
+  min-width: 92px;
+  padding: 0 8px;
+  border-radius: 6px;
   border: 1px solid #30363d;
-  border-radius: 4px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 11px;
-  color: #c9d1d9;
+  background: #0d1117;
+  color: #e6edf3;
+}
+
+.file-input {
+  display: none;
+}
+
+.session-msg,
+.import-error {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.session-msg {
+  color: #8b949e;
+}
+
+.import-error {
+  color: #f85149;
 }
 
 .main {
@@ -252,6 +422,35 @@ function onMarketSell() {
 
 .sidebar.left > * {
   flex: 1;
+}
+
+.right-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+}
+
+.panel-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.panel-tabs button {
+  min-height: 34px;
+}
+
+.panel-tabs button.active {
+  background: #1f6feb;
+  border-color: #1f6feb;
+}
+
+.right-panel > :not(.panel-tabs) {
+  flex: 1 1 0;
+  min-height: 0;
 }
 
 .chart-area {

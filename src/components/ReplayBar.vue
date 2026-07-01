@@ -1,15 +1,16 @@
 <script setup>
-import { computed, defineProps, defineEmits } from 'vue'
+import { computed } from 'vue'
 
 const props = defineProps({
   replayIndex: { type: Number, required: true },
   replayMax: { type: Number, required: true },
   canReplayNext: { type: Boolean, required: true },
+  canReplayPrev: { type: Boolean, required: true },
   isAutoPlaying: { type: Boolean, required: true },
   currentBar: { type: Object, default: null }
 })
 
-const emit = defineEmits(['next', 'reset', 'auto-toggle'])
+const emit = defineEmits(['next', 'prev', 'reset', 'auto-toggle'])
 
 const progress = computed(() => {
   if (!props.replayMax) return 0
@@ -31,6 +32,15 @@ function fmtTime(time) {
 <template>
   <div class="replay-bar">
     <div class="left">
+      <button
+        class="big"
+        :disabled="!canReplayPrev"
+        @click="emit('prev')"
+        :title="'回退一根K线 (←)'"
+      >
+        ◀ 上一根
+      </button>
+
       <button
         class="primary big"
         :disabled="!canReplayNext"

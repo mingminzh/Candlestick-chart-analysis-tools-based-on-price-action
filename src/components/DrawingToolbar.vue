@@ -1,12 +1,10 @@
 <script setup>
-import { defineProps, defineEmits } from 'vue'
-
 const props = defineProps({
   activeTool: { type: String, default: null },
   drawingsCount: { type: Number, default: 0 }
 })
 
-const emit = defineEmits(['select', 'clear', 'toggle-magnet'])
+const emit = defineEmits(['select', 'clear', 'toggle-magnet', 'market-long', 'market-short'])
 
 // 这些 toolName 来自 @mg-exchange/charts 的 47 种画线工具
 const tools = [
@@ -19,9 +17,7 @@ const tools = [
   { name: 'rectangle', label: '矩形', icon: '▭' },
   { name: 'ellipse', label: '椭圆', icon: '○' },
   { name: 'arrow', label: '箭头', icon: '→' },
-  { name: 'text', label: '文字', icon: 'T' },
-  { name: 'long-position', label: '多头位置', icon: '🟢' },
-  { name: 'short-position', label: '空头位置', icon: '🔴' }
+  { name: 'text', label: '文字', icon: 'T' }
 ]
 </script>
 
@@ -39,6 +35,20 @@ const tools = [
         <span class="icon">{{ t.icon }}</span>
         <span class="lbl">{{ t.label }}</span>
       </button>
+    </div>
+
+    <div class="trade-tools">
+      <div class="title">交易动作</div>
+      <div class="trade-grid">
+        <button class="trade-btn long" title="按当前K线收盘价市价做多" @click="emit('market-long')">
+          <span class="icon">L</span>
+          <span class="lbl">做多</span>
+        </button>
+        <button class="trade-btn short" title="按当前K线收盘价市价做空" @click="emit('market-short')">
+          <span class="icon">S</span>
+          <span class="lbl">做空</span>
+        </button>
+      </div>
     </div>
 
     <div class="actions">
@@ -116,6 +126,52 @@ const tools = [
   gap: 8px;
   padding-top: 8px;
   border-top: 1px solid #30363d;
+}
+
+.trade-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid #30363d;
+}
+
+.trade-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.trade-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.trade-btn .icon {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.trade-btn.long {
+  background: rgba(38, 166, 154, 0.14);
+  border-color: rgba(38, 166, 154, 0.45);
+  color: #26a69a;
+}
+
+.trade-btn.short {
+  background: rgba(239, 83, 80, 0.14);
+  border-color: rgba(239, 83, 80, 0.45);
+  color: #ef5350;
 }
 
 .magnet {

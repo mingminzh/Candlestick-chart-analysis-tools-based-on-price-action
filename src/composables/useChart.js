@@ -628,6 +628,21 @@ export function useChart() {
     }
   }
 
+  function setRiskRewardTool(side) {
+    if (!chart) return
+    const toolKey = side === 'short' ? 'short-position' : 'long-position'
+    if (activeDrawingTool.value === toolKey) {
+      activeDrawingTool.value = null
+      chart.setDrawingTool(null)
+      return
+    }
+    activeDrawingTool.value = toolKey
+    chart.setDrawingTool('long-short')
+    sessionMessage.value = side === 'short'
+      ? '空头仓位工具: 依次点击入场、目标下方、止损上方'
+      : '多头仓位工具: 依次点击入场、目标上方、止损下方'
+  }
+
   function clearDrawings() {
     if (!chart) return
     chart.clearDrawings()
@@ -1242,6 +1257,7 @@ export function useChart() {
     activeDrawingTool,
     drawingsCount,
     setDrawingTool,
+    setRiskRewardTool,
     clearDrawings,
     setMagnetMode,
     deleteSelectedDrawing,

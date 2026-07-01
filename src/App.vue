@@ -37,6 +37,7 @@ const {
   activeDrawingTool,
   drawingsCount,
   setDrawingTool,
+  setRiskRewardTool,
   clearDrawings,
   setMagnetMode,
   deleteSelectedDrawing,
@@ -224,8 +225,7 @@ async function onCsvSelected(e) {
           :active-tool="activeDrawingTool"
           :drawings-count="drawingsCount"
           @select="setDrawingTool"
-          @market-long="onMarketBuy"
-          @market-short="onMarketSell"
+          @select-position="setRiskRewardTool"
           @clear="clearDrawings"
           @toggle-magnet="setMagnetMode"
         />

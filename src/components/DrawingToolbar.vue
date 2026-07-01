@@ -4,7 +4,7 @@ const props = defineProps({
   drawingsCount: { type: Number, default: 0 }
 })
 
-const emit = defineEmits(['select', 'clear', 'toggle-magnet', 'market-long', 'market-short'])
+const emit = defineEmits(['select', 'select-position', 'clear', 'toggle-magnet'])
 
 // 这些 toolName 来自 @mg-exchange/charts 的 47 种画线工具
 const tools = [
@@ -37,18 +37,27 @@ const tools = [
       </button>
     </div>
 
-    <div class="trade-tools">
-      <div class="title">交易动作</div>
+    <div class="position-tools">
+      <div class="title">仓位测量</div>
       <div class="trade-grid">
-        <button class="trade-btn long" title="按当前K线收盘价市价做多" @click="emit('market-long')">
+        <button
+          :class="['trade-btn', 'long', { active: activeTool === 'long-position' }]"
+          title="TradingView 多头仓位: 依次点击入场、目标、止损"
+          @click="emit('select-position', 'long')"
+        >
           <span class="icon">L</span>
-          <span class="lbl">做多</span>
+          <span class="lbl">多头仓位</span>
         </button>
-        <button class="trade-btn short" title="按当前K线收盘价市价做空" @click="emit('market-short')">
+        <button
+          :class="['trade-btn', 'short', { active: activeTool === 'short-position' }]"
+          title="TradingView 空头仓位: 依次点击入场、目标、止损"
+          @click="emit('select-position', 'short')"
+        >
           <span class="icon">S</span>
-          <span class="lbl">做空</span>
+          <span class="lbl">空头仓位</span>
         </button>
       </div>
+      <div class="tool-hint">点击3点: 入场 → 目标 → 止损</div>
     </div>
 
     <div class="actions">
@@ -128,7 +137,7 @@ const tools = [
   border-top: 1px solid #30363d;
 }
 
-.trade-tools {
+.position-tools {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -172,6 +181,17 @@ const tools = [
   background: rgba(239, 83, 80, 0.14);
   border-color: rgba(239, 83, 80, 0.45);
   color: #ef5350;
+}
+
+.trade-btn.active {
+  box-shadow: 0 0 0 1px currentColor inset;
+  background: #1f2937;
+}
+
+.tool-hint {
+  color: #6e7681;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .magnet {

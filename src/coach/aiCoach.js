@@ -67,6 +67,16 @@ function aiEndpoint() {
   return window.localStorage.getItem('pa-ai-review-endpoint') || import.meta.env.VITE_AI_REVIEW_ENDPOINT || ''
 }
 
+function openAiApiKey() {
+  if (typeof window === 'undefined') return ''
+  return window.localStorage.getItem('pa-openai-api-key') || ''
+}
+
+function openAiModel() {
+  if (typeof window === 'undefined') return ''
+  return window.localStorage.getItem('pa-openai-model') || ''
+}
+
 function normalizeFeedback(data, payload) {
   const raw = data?.feedback || data
   return {
@@ -89,9 +99,14 @@ function normalizeFeedback(data, payload) {
 export async function requestAiCoachFeedback(payload) {
   const endpoint = aiEndpoint()
   if (!endpoint) {
+    const apiKey = openAiApiKey()
+    const model = openAiModel()
+    if (apiKey && model) {
+      return requestOpenAiDirect({ apiKey, model, payload })
+    }
     return {
       createdAt: new Date().toISOString(),
-      summary: 'AI 点评接口未配置。请设置 localStorage: pa-ai-review-endpoint，或配置 VITE_AI_REVIEW_ENDPOINT。',
+      summary: 'AI 点评未配置。请在顶部“AI设置”里填写代理接口地址，或填写 OpenAI API Key 和模型名。',
       score: undefined,
       sections: [
         {
@@ -128,4 +143,36 @@ export async function requestAiCoachFeedback(payload) {
     throw new Error(`AI 点评接口请求失败: ${res.status}`)
   }
   return normalizeFeedback(await res.json(), payload)
+}
+
+async function requestOpenAiDirect({ apiKey, model, payload }) {
+  const body = buildAiReviewRequest(payload)
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: body.systemPrompt },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            sectionPrompts: body.sectionPrompts,
+            outputSchema: body.outputSchema,
+            payload: body.payload
+          })
+        }
+      ]
+    })
+  })
+  if (!res.ok) {
+    throw new Error(`OpenAI 请求失败: ${res.status}`)
+  }
+  const data = await res.json()
+  const content = data?.choices?.[0]?.message?.content || '{}'
+  return normalizeFeedback(JSON.parse(content), payload)
 }

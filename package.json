@@ -3,10 +3,14 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "desktop": "npm run build && electron electron/main.cjs",
+    "package:mac": "npm run build && electron-builder --mac",
+    "package:dir": "npm run build && electron-builder --dir"
   },
   "dependencies": {
     "@mg-exchange/charts": "^0.1.1",
@@ -14,6 +18,23 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.0",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3",
     "vite": "^5.4.0"
+  },
+  "build": {
+    "appId": "com.priceaction.replay",
+    "productName": "价格行为复盘训练",
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "category": "public.app-category.finance"
+    }
   }
 }

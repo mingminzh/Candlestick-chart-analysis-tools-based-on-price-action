@@ -6,6 +6,7 @@ import DrawingToolbar from './components/DrawingToolbar.vue'
 import TradePanel from './components/TradePanel.vue'
 import ReportPanel from './components/ReportPanel.vue'
 import TradeMarkersOverlay from './components/TradeMarkersOverlay.vue'
+import AiSettingsModal from './components/AiSettingsModal.vue'
 
 const chartContainer = ref(null)
 
@@ -83,6 +84,7 @@ const fileInput = ref(null)
 const importError = ref('')
 const activeRightPanel = ref('trade')
 const selectedTimeframe = ref(timeframe.value)
+const aiSettingsOpen = ref(false)
 
 watch(timeframe, (value) => {
   selectedTimeframe.value = value
@@ -214,8 +216,15 @@ async function onCsvSelected(e) {
         </button>
         <button @click="openCsvPicker">导入CSV</button>
         <button @click="resetToMockData">模拟数据</button>
+        <button @click="aiSettingsOpen = true">AI设置</button>
       </div>
     </header>
+
+    <AiSettingsModal
+      :open="aiSettingsOpen"
+      @close="aiSettingsOpen = false"
+      @saved="importError = ''"
+    />
 
     <!-- 回放控制条 -->
     <div class="replay-wrap">

@@ -70,6 +70,23 @@ npm run dev
 
 打开 http://localhost:5173
 
+## 桌面应用
+
+项目已加入 Electron 外壳：
+
+```bash
+npm install
+npm run desktop
+```
+
+打包 macOS 应用：
+
+```bash
+npm run package:mac
+```
+
+打包产物会输出到 `release/`。
+
 ## CSV 格式
 
 最小示例：
@@ -88,6 +105,8 @@ time,open,high,low,close,volume
 
 - 环境变量：`VITE_AI_REVIEW_ENDPOINT`
 - 或浏览器本地配置：`localStorage.setItem('pa-ai-review-endpoint', 'https://your-domain/api/review')`
+- 或在页面右上角点击“AI设置”填写代理接口地址
+- 本机/桌面版也可在“AI设置”里填写 OpenAI API Key 和模型名直接调用
 
 请求体包含：
 

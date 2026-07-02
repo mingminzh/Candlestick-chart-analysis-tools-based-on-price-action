@@ -3,7 +3,8 @@ import { Chart } from '@mg-exchange/charts'
 import { generateMockBars } from '../data/mockData.js'
 import { parseCsvBars } from '../data/csvBars.js'
 import { BTC_TIMEFRAMES, fetchLatestBtcBars } from '../data/binanceData.js'
-import { buildCoachPayload, generateLocalCoachFeedback } from '../coach/localCoach.js'
+import { buildCoachPayload } from '../coach/localCoach.js'
+import { requestAiCoachFeedback } from '../coach/aiCoach.js'
 
 const STORAGE_KEY = 'pa-training-replay-session:v1'
 const DEFAULT_CONTEXT_BARS = 200
@@ -180,7 +181,7 @@ function timeframeSeconds(tf) {
   return 3600
 }
 
-function utcDayKey(time) {
+function chinaEightSessionKey(time) {
   const d = new Date(time * 1000)
   return `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`
 }
@@ -208,6 +209,7 @@ export function useChart() {
   const isLoadingData = ref(false)
   const dataError = ref('')
   const selectedTradeId = ref(savedSession?.selectedTradeId || '')
+  const markerRefreshTick = ref(0)
   const barCountSettings = reactive({
     enabled: savedSession?.barCountSettings?.enabled ?? true,
     displayInterval: savedSession?.barCountSettings?.displayInterval ?? savedSession?.barCountSettings?.reminderInterval ?? 2
@@ -281,12 +283,14 @@ export function useChart() {
   const barReviews = reactive({})
   const coachFeedbacks = reactive({})
   const mistakes = reactive({})
+  const tradeNotes = reactive({})
   assignReactiveArray(orders, savedSession?.orders)
   assignReactiveArray(positions, savedSession?.positions)
   assignReactiveArray(trades, savedSession?.trades)
   assignReactiveObject(barReviews, savedSession?.barReviews)
   assignReactiveObject(coachFeedbacks, savedSession?.coachFeedbacks)
   assignReactiveObject(mistakes, savedSession?.mistakes)
+  assignReactiveObject(tradeNotes, savedSession?.tradeNotes)
 
   const realizedPnL = computed(() => trades.reduce((s, t) => s + t.pnl, 0))
 
@@ -306,6 +310,9 @@ export function useChart() {
     return key && barReviews[key] ? { ...blankReview(), ...barReviews[key] } : blankReview()
   })
   const currentCoachFeedback = computed(() => {
+    if (selectedTradeId.value && coachFeedbacks[`trade:${selectedTradeId.value}`]) {
+      return coachFeedbacks[`trade:${selectedTradeId.value}`]
+    }
     const key = currentReviewKey.value
     return key && coachFeedbacks[key] ? coachFeedbacks[key] : null
   })
@@ -341,9 +348,67 @@ export function useChart() {
       mistakeCount: Object.keys(mistakes).length
     }
   })
+  const tradeMarkers = computed(() => {
+    markerRefreshTick.value
+    if (!chart || !Array.isArray(trades) || !trades.length) return []
+    const scale = chart.timeScale
+    const priceScale = chart.priceScale
+    const dataSource = chart.dataSource
+    if (!scale || !priceScale || !dataSource) return []
+    const chartWidth = chart.chartWidth || chartContainerWidth()
+    const paneHeight = chart.paneManager?.getMain?.().height || chart.chartHeight || chartContainerHeight()
+    const first = Math.floor(scale.firstIndex) - 2
+    const last = Math.ceil(scale.firstIndex + scale.visibleCount) + 2
+    return trades.map(trade => {
+      const idx = dataSource.nearestIndex?.(trade.openTime)
+      if (!Number.isFinite(idx) || idx < first || idx > last) return null
+      const x = (idx - scale.firstIndex) * scale.barSpacing + scale.offsetX + scale.barSpacing / 2
+      const y = priceToY(trade.entryPrice, priceScale, paneHeight)
+      if (!Number.isFinite(x) || !Number.isFinite(y) || x < -24 || x > chartWidth + 24 || y < -24 || y > paneHeight + 24) return null
+      return {
+        id: trade.id,
+        x,
+        y,
+        side: trade.side,
+        profitable: Number(trade.pnl || 0) >= 0,
+        pnl: Number(trade.pnl || 0),
+        quantity: trade.quantity,
+        notional: trade.notional || trade.entryPrice * trade.quantity,
+        entryPrice: trade.entryPrice,
+        closePrice: trade.closePrice,
+        openTime: trade.openTime,
+        closeTime: trade.closeTime,
+        exitReason: trade.exitReason || 'manual'
+      }
+    }).filter(Boolean)
+  })
 
   let orderIdSeq = nextNumericId(orders, 'ord-')
   let positionIdSeq = nextNumericId(positions, 'pos-')
+  let markerRefreshTimer = null
+
+  function chartContainerWidth() {
+    return chart?.container?.clientWidth || 0
+  }
+
+  function chartContainerHeight() {
+    return chart?.container?.clientHeight || 0
+  }
+
+  function priceToY(price, scale, height) {
+    if (!scale || !height) return 0
+    if (scale.mode === 'logarithmic') {
+      const min = Math.log(scale.min)
+      const max = Math.log(scale.max)
+      return max === min ? height / 2 : height * (1 - (Math.log(price) - min) / (max - min))
+    }
+    const range = scale.max - scale.min
+    return range === 0 ? height / 2 : height * (1 - (price - scale.min) / range)
+  }
+
+  function refreshTradeMarkers() {
+    markerRefreshTick.value += 1
+  }
 
   // ---------- Chart 初始化 ----------
   function initChart(container) {
@@ -352,6 +417,10 @@ export function useChart() {
       try { chart.destroy() } catch (e) {}
       chart = null
       ema20IndicatorId = null
+    }
+    if (markerRefreshTimer) {
+      clearInterval(markerRefreshTimer)
+      markerRefreshTimer = null
     }
     // 防御性：清空容器内可能残留的 canvas（来自旧 Chart 实例）
     while (container.firstChild) container.removeChild(container.firstChild)
@@ -444,6 +513,7 @@ export function useChart() {
     chartReady.value = true
     ensureCoreIndicators()
     restoreChartDecorations()
+    markerRefreshTimer = window.setInterval(refreshTradeMarkers, 250)
   }
 
   function ensureCoreIndicators() {
@@ -489,6 +559,7 @@ export function useChart() {
     refreshBarCountMarkers()
     restoreOrderLines()
     refreshPositionOverlays()
+    refreshTradeMarkers()
   }
 
   function replayNext() {
@@ -606,18 +677,19 @@ export function useChart() {
     saveSession()
   }
 
-  function runCoachForCurrentBar() {
+  async function runCoachForCurrentBar() {
     if (!currentBar.value) return
-    const key = currentReviewKey.value
+    const selected = selectedTrade.value
+    const key = selected?.id ? `trade:${selected.id}` : currentReviewKey.value
     const payload = buildCoachPayload({
       bars: allBars.value,
       replayIndex: replayIndex.value,
-      review: currentReview.value,
+      review: selected?.id ? { ...currentReview.value, note: tradeNotes[selected.id] || '' } : currentReview.value,
       trades,
       positions,
-      selectedTrade: selectedTrade.value
+      selectedTrade: selected ? { ...selected, note: tradeNotes[selected.id] || '' } : null
     })
-    coachFeedbacks[key] = generateLocalCoachFeedback(payload)
+    coachFeedbacks[key] = await requestAiCoachFeedback(payload)
     saveSession()
   }
 
@@ -1043,6 +1115,7 @@ export function useChart() {
     }
     positions.splice(idx, 1)
     refreshPositionOverlays()
+    refreshTradeMarkers()
     saveSession()
   }
 
@@ -1185,6 +1258,8 @@ export function useChart() {
     account.balance -= Number(trade.pnl || 0)
     trades.splice(idx, 1)
     if (selectedTradeId.value === tradeId) selectedTradeId.value = ''
+    delete tradeNotes[tradeId]
+    refreshTradeMarkers()
     saveSession()
   }
 
@@ -1208,7 +1283,7 @@ export function useChart() {
 
   function refreshBarCountMarkers() {
     if (!chart || typeof chart.setBarMarkers !== 'function') return
-    if (!barCountSettings.enabled) {
+    if (!barCountSettings.enabled || timeframeSeconds(timeframe.value) >= 86400) {
       chart.setBarMarkers([])
       return
     }
@@ -1217,7 +1292,7 @@ export function useChart() {
     let previousDay = ''
     const markers = []
     for (const bar of allBars.value.slice(0, replayIndex.value + 1)) {
-      const day = utcDayKey(bar.time)
+      const day = chinaEightSessionKey(bar.time)
       count = day !== previousDay ? 1 : count + 1
       previousDay = day
       if (count % interval === 0) {
@@ -1248,6 +1323,12 @@ export function useChart() {
     saveSession()
   }
 
+  function updateTradeNote(tradeId, note) {
+    if (!tradeId) return
+    tradeNotes[tradeId] = String(note || '')
+    saveSession()
+  }
+
   function saveSession() {
     safeWriteSession({
       savedAt: new Date().toISOString(),
@@ -1264,6 +1345,7 @@ export function useChart() {
       orders: orders.map(o => ({ ...o })),
       positions: positions.map(p => ({ ...p })),
       trades: trades.map(t => ({ ...t })),
+      tradeNotes: { ...tradeNotes },
       barReviews: Object.fromEntries(
         Object.entries(barReviews).map(([key, value]) => [key, { ...value }])
       ),
@@ -1292,6 +1374,10 @@ export function useChart() {
       chart.destroy()
       chart = null
       ema20IndicatorId = null
+    }
+    if (markerRefreshTimer) {
+      clearInterval(markerRefreshTimer)
+      markerRefreshTimer = null
     }
   }
 
@@ -1338,6 +1424,8 @@ export function useChart() {
     orders,
     positions,
     trades,
+    tradeNotes,
+    tradeMarkers,
     selectedTrade,
     selectedTradeId,
     barReviews,
@@ -1365,6 +1453,7 @@ export function useChart() {
     closeAllPositions,
     deleteTrade,
     selectTradeForReview,
+    updateTradeNote,
     updateCurrentReview,
     clearCurrentReview,
     runCoachForCurrentBar,

@@ -6,6 +6,7 @@ const props = defineProps({
   orders: { type: Array, required: true },
   positions: { type: Array, required: true },
   trades: { type: Array, required: true },
+  tradeNotes: { type: Object, default: () => ({}) },
   selectedTrade: { type: Object, default: null },
   selectedTradeId: { type: String, default: '' },
   feedback: { type: Object, default: null },
@@ -33,6 +34,7 @@ const emit = defineEmits([
   'remove-sl',
   'select-trade',
   'review-trade',
+  'update-trade-note',
   'delete-trade',
   'reset-account'
 ])
@@ -41,6 +43,8 @@ const currentPrice = computed(() => props.currentBar?.close?.toFixed(2) ?? '-')
 const pnlClass = (v) => (v > 0 ? 'pos' : v < 0 ? 'neg' : '')
 const pendingPrice = ref('')
 const reviewCollapsed = ref(false)
+const isListening = ref(false)
+let recognition = null
 const accountDraft = ref({
   initialBalance: props.account.initialBalance,
   orderMode: props.account.orderMode || 'qty',
@@ -173,6 +177,55 @@ function orderKindHint(o) {
     return o.type === 'tp' ? 'TP · 达到自动平仓' : 'SL · 达到自动平仓'
   }
   return '挂单: ' + fmtTime(o.createdAt)
+}
+
+const speechSupported = computed(() => {
+  if (typeof window === 'undefined') return false
+  return Boolean(window.SpeechRecognition || window.webkitSpeechRecognition)
+})
+
+const selectedTradeNote = computed(() => props.selectedTrade?.id ? props.tradeNotes[props.selectedTrade.id] || '' : '')
+
+function updateSelectedTradeNote(value) {
+  if (!props.selectedTrade?.id) return
+  emit('update-trade-note', props.selectedTrade.id, value)
+}
+
+function startVoiceInput() {
+  if (!props.selectedTrade?.id || !speechSupported.value) return
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+  recognition?.stop?.()
+  recognition = new SpeechRecognition()
+  recognition.lang = 'zh-CN'
+  recognition.interimResults = true
+  recognition.continuous = false
+  const baseText = selectedTradeNote.value
+  recognition.onstart = () => {
+    isListening.value = true
+  }
+  recognition.onresult = (event) => {
+    let finalText = ''
+    let interimText = ''
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const text = event.results[i][0]?.transcript || ''
+      if (event.results[i].isFinal) finalText += text
+      else interimText += text
+    }
+    const prefix = baseText ? `${baseText}\n` : ''
+    updateSelectedTradeNote(`${prefix}${finalText || interimText}`.trim())
+  }
+  recognition.onend = () => {
+    isListening.value = false
+  }
+  recognition.onerror = () => {
+    isListening.value = false
+  }
+  recognition.start()
+}
+
+function stopVoiceInput() {
+  recognition?.stop?.()
+  isListening.value = false
 }
 </script>
 
@@ -388,6 +441,23 @@ function orderKindHint(o) {
         v-if="selectedTrade && feedback && feedback.payloadPreview?.selectedTradeId === selectedTrade.id"
         class="trade-review"
       >
+        <div class="voice-note">
+          <div class="voice-head">
+            <span>交易备注</span>
+            <button
+              class="mini"
+              :disabled="!speechSupported"
+              @click="isListening ? stopVoiceInput() : startVoiceInput()"
+            >
+              {{ isListening ? '停止语音' : '语音输入' }}
+            </button>
+          </div>
+          <textarea
+            :value="selectedTradeNote"
+            placeholder="可以说出你的入场理由、当时看到的形态、犹豫点或执行问题。"
+            @input="(e) => updateSelectedTradeNote(e.target.value)"
+          ></textarea>
+        </div>
         <div class="review-head">
           <div>
             <div class="title">交易点评</div>
@@ -431,6 +501,23 @@ function orderKindHint(o) {
         </template>
       </div>
       <div v-else-if="selectedTrade" class="review-empty">
+        <div class="voice-note">
+          <div class="voice-head">
+            <span>交易备注</span>
+            <button
+              class="mini"
+              :disabled="!speechSupported"
+              @click="isListening ? stopVoiceInput() : startVoiceInput()"
+            >
+              {{ isListening ? '停止语音' : '语音输入' }}
+            </button>
+          </div>
+          <textarea
+            :value="selectedTradeNote"
+            placeholder="可以先用语音记录这笔单的入场理由，再点击点评。"
+            @input="(e) => updateSelectedTradeNote(e.target.value)"
+          ></textarea>
+        </div>
         已选中交易，点击该笔记录右侧“点评”生成分析。
       </div>
     </div>
@@ -670,6 +757,37 @@ button.ghost {
   color: #8b949e;
   font-size: 12px;
   text-align: center;
+}
+
+.voice-note {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+  text-align: left;
+}
+
+.voice-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  color: #8b949e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.voice-note textarea {
+  min-height: 74px;
+  width: 100%;
+  resize: vertical;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid #30363d;
+  background: #161b22;
+  color: #e6edf3;
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .review-summary {

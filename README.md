@@ -82,6 +82,33 @@ time,open,high,low,close,volume
 
 时间列可以使用 Unix 秒、Unix 毫秒，或可被浏览器解析的日期时间字符串。导入后会按时间升序排序，相同时间的K线以后出现的记录为准。
 
+## AI 点评接口
+
+前端不会保存或暴露 OpenAI API Key。交易点评会向可配置的后端代理发送请求：
+
+- 环境变量：`VITE_AI_REVIEW_ENDPOINT`
+- 或浏览器本地配置：`localStorage.setItem('pa-ai-review-endpoint', 'https://your-domain/api/review')`
+
+请求体包含：
+
+- `systemPrompt`：Al Brooks 价格行为复盘教练系统提示词
+- `sectionPrompts`：开盘背景、市场周期转换、逐K分析、本次交易 Setup、操作建议、常见错误、总结
+- `payload`：选中交易、上下文 K 线、账户/持仓/备注等结构化数据
+
+接口返回 JSON：
+
+```json
+{
+  "summary": "一句话核心结论",
+  "score": 82,
+  "sections": [{ "title": "逐K分析", "body": "...", "items": ["..."] }],
+  "issues": [{ "severity": "warn", "title": "问题", "detail": "..." }],
+  "suggestions": ["下一次执行规则"]
+}
+```
+
+成交历史中选中交易后可使用浏览器语音输入记录交易备注，点击“点评”时备注会随同交易上下文一起发给 AI 接口。
+
 ## 项目结构
 
 ```

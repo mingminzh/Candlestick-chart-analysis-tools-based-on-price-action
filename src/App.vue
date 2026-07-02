@@ -5,6 +5,7 @@ import ReplayBar from './components/ReplayBar.vue'
 import DrawingToolbar from './components/DrawingToolbar.vue'
 import TradePanel from './components/TradePanel.vue'
 import ReportPanel from './components/ReportPanel.vue'
+import TradeMarkersOverlay from './components/TradeMarkersOverlay.vue'
 
 const chartContainer = ref(null)
 
@@ -48,6 +49,8 @@ const {
   orders,
   positions,
   trades,
+  tradeNotes,
+  tradeMarkers,
   selectedTrade,
   selectedTradeId,
   currentReview,
@@ -72,6 +75,7 @@ const {
   closeAllPositions,
   deleteTrade,
   selectTradeForReview,
+  updateTradeNote,
   runCoachForCurrentBar
 } = useChart()
 
@@ -134,9 +138,19 @@ function onSelectTrade(tradeId) {
   selectTradeForReview(tradeId)
 }
 
-function onReviewTrade(tradeId) {
+async function onReviewTrade(tradeId) {
   selectTradeForReview(tradeId)
-  runCoachForCurrentBar()
+  activeRightPanel.value = 'trade'
+  try {
+    await runCoachForCurrentBar()
+  } catch (err) {
+    importError.value = err?.message || 'AI点评失败'
+  }
+}
+
+function onTradeMarkerSelect(tradeId) {
+  activeRightPanel.value = 'trade'
+  onReviewTrade(tradeId)
 }
 
 async function onTimeframeChange() {
@@ -238,6 +252,11 @@ async function onCsvSelected(e) {
       <!-- 中间：图表 -->
       <main class="chart-area">
         <div ref="chartContainer" class="chart"></div>
+        <TradeMarkersOverlay
+          :markers="tradeMarkers"
+          :selected-trade-id="selectedTradeId"
+          @select="onTradeMarkerSelect"
+        />
       </main>
 
       <!-- 右侧：交易面板 -->
@@ -258,6 +277,7 @@ async function onCsvSelected(e) {
             :orders="orders"
             :positions="positions"
             :trades="trades"
+            :trade-notes="tradeNotes"
             :selected-trade="selectedTrade"
             :selected-trade-id="selectedTradeId"
             :feedback="currentCoachFeedback"
@@ -276,6 +296,7 @@ async function onCsvSelected(e) {
             @close-position="closePosition"
             @select-trade="onSelectTrade"
             @review-trade="onReviewTrade"
+            @update-trade-note="updateTradeNote"
             @delete-trade="deleteTrade"
             @close-all="closeAllPositions"
             @cancel-order="cancelOrder"
@@ -458,6 +479,7 @@ async function onCsvSelected(e) {
 }
 
 .chart-area {
+  position: relative;
   background: #161b22;
   border: 1px solid #30363d;
   border-radius: 8px;

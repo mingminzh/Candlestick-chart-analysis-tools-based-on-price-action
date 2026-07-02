@@ -67,18 +67,39 @@ function aiEndpoint() {
   return (window.localStorage.getItem('pa-ai-review-endpoint') || import.meta.env.VITE_AI_REVIEW_ENDPOINT || '').trim()
 }
 
-function openAiApiKey() {
-  if (typeof window === 'undefined') return ''
-  return (window.localStorage.getItem('pa-openai-api-key') || '').trim()
+function aiProvider() {
+  if (typeof window === 'undefined') return 'deepseek'
+  return (window.localStorage.getItem('pa-ai-provider') || 'deepseek').trim()
 }
 
-function openAiModel() {
+function aiApiKey() {
   if (typeof window === 'undefined') return ''
-  return (window.localStorage.getItem('pa-openai-model') || '').trim()
+  return (
+    window.localStorage.getItem('pa-ai-api-key') ||
+    window.localStorage.getItem('pa-openai-api-key') ||
+    ''
+  ).trim()
+}
+
+function aiModel(provider) {
+  if (typeof window === 'undefined') return ''
+  const saved = (
+    window.localStorage.getItem('pa-ai-model') ||
+    window.localStorage.getItem('pa-openai-model') ||
+    ''
+  ).trim()
+  if (saved) return saved
+  if (provider === 'deepseek') return 'deepseek-chat'
+  return ''
 }
 
 function isOpenAiEndpoint(endpoint) {
   return /^https:\/\/api\.openai\.com\/v1\//i.test(endpoint)
+}
+
+function defaultChatEndpoint(provider) {
+  if (provider === 'deepseek') return 'https://api.deepseek.com/chat/completions'
+  return 'https://api.openai.com/v1/chat/completions'
 }
 
 async function readErrorMessage(res) {
@@ -91,7 +112,7 @@ async function readErrorMessage(res) {
 }
 
 function authErrorMessage(prefix, message = '') {
-  return `${prefix}: 401。请检查 AI设置 中的 API Key 是否完整、是否有权限、是否填错了位置。若本机直连 OpenAI，请留空“AI代理接口地址”，只填写 OpenAI API Key 和模型名。${message ? ` 原始信息: ${message}` : ''}`
+  return `${prefix}: 401。请检查 AI设置 中的服务商、API Key、模型名是否对应。DeepSeek 请选“DeepSeek”，只填写 DeepSeek API Key，模型可用 deepseek-chat。${message ? ` 原始信息: ${message}` : ''}`
 }
 
 function normalizeFeedback(data, payload) {
@@ -114,30 +135,47 @@ function normalizeFeedback(data, payload) {
 }
 
 export async function requestAiCoachFeedback(payload) {
+  const provider = aiProvider()
   const endpoint = aiEndpoint()
-  const apiKey = openAiApiKey()
-  const model = openAiModel()
+  const apiKey = aiApiKey()
+  const model = aiModel(provider)
+
+  if (provider === 'proxy') {
+    if (!endpoint) {
+      throw new Error('当前选择了“自定义代理”，但还没有填写 AI代理接口地址。')
+    }
+    return requestProxyEndpoint({ endpoint, payload })
+  }
+
   if (endpoint && isOpenAiEndpoint(endpoint)) {
     if (!apiKey || !model) {
-      throw new Error('检测到“AI代理接口地址”填写的是 OpenAI 官方地址。请改为留空代理接口，并填写 OpenAI API Key 与模型名。')
+      throw new Error('检测到“AI代理接口地址”填写的是 OpenAI 官方地址。如果你用 DeepSeek，请清空代理接口并选择 DeepSeek；如果用 OpenAI，请选择 OpenAI 并填写 Key 与模型名。')
     }
-    return requestOpenAiDirect({ apiKey, model, payload })
+    return requestOpenAiCompatible({ endpoint, apiKey, model, provider: 'openai', payload })
   }
+
+  if (apiKey && model) {
+    return requestOpenAiCompatible({
+      endpoint: defaultChatEndpoint(provider),
+      apiKey,
+      model,
+      provider,
+      payload
+    })
+  }
+
   if (!endpoint) {
-    if (apiKey && model) {
-      return requestOpenAiDirect({ apiKey, model, payload })
-    }
     return {
       createdAt: new Date().toISOString(),
-      summary: 'AI 点评未配置。请在顶部“AI设置”里填写代理接口地址，或填写 OpenAI API Key 和模型名。',
+      summary: 'AI 点评未配置。请在顶部“AI设置”里选择 DeepSeek，并填写 DeepSeek API Key。模型默认 deepseek-chat。',
       score: undefined,
       sections: [
         {
           title: 'AI 接入方式',
           items: [
-            '前端会向配置的接口 POST 结构化复盘上下文和提示词。',
-            '接口应返回 JSON: { summary, score, sections, issues, suggestions }。',
-            '建议由后端代理调用 OpenAI，避免在浏览器暴露 API Key。'
+            'DeepSeek: 选择 DeepSeek，填写 DeepSeek API Key，模型默认 deepseek-chat。',
+            'OpenAI: 选择 OpenAI，填写 OpenAI API Key 和模型名。',
+            '自定义代理: 选择自定义代理，填写你自己的后端接口地址。'
           ]
         },
         {
@@ -157,6 +195,10 @@ export async function requestAiCoachFeedback(payload) {
     }
   }
 
+  return requestProxyEndpoint({ endpoint, payload })
+}
+
+async function requestProxyEndpoint({ endpoint, payload }) {
   const res = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -170,9 +212,9 @@ export async function requestAiCoachFeedback(payload) {
   return normalizeFeedback(await res.json(), payload)
 }
 
-async function requestOpenAiDirect({ apiKey, model, payload }) {
+async function requestOpenAiCompatible({ endpoint, apiKey, model, provider, payload }) {
   const body = buildAiReviewRequest(payload)
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -196,8 +238,8 @@ async function requestOpenAiDirect({ apiKey, model, payload }) {
   })
   if (!res.ok) {
     const message = await readErrorMessage(res)
-    if (res.status === 401) throw new Error(authErrorMessage('OpenAI 鉴权失败', message))
-    throw new Error(`OpenAI 请求失败: ${res.status}${message ? ` ${message}` : ''}`)
+    if (res.status === 401) throw new Error(authErrorMessage(`${provider === 'deepseek' ? 'DeepSeek' : 'OpenAI'} 鉴权失败`, message))
+    throw new Error(`${provider === 'deepseek' ? 'DeepSeek' : 'OpenAI'} 请求失败: ${res.status}${message ? ` ${message}` : ''}`)
   }
   const data = await res.json()
   const content = data?.choices?.[0]?.message?.content || '{}'

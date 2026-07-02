@@ -10,30 +10,43 @@ const emit = defineEmits(['close', 'saved'])
 const endpoint = ref('')
 const apiKey = ref('')
 const model = ref('')
+const provider = ref('deepseek')
 
 watch(() => props.open, (value) => {
   if (!value || typeof window === 'undefined') return
+  provider.value = window.localStorage.getItem('pa-ai-provider') || 'deepseek'
   endpoint.value = window.localStorage.getItem('pa-ai-review-endpoint') || ''
-  apiKey.value = window.localStorage.getItem('pa-openai-api-key') || ''
-  model.value = window.localStorage.getItem('pa-openai-model') || ''
+  apiKey.value = window.localStorage.getItem('pa-ai-api-key') || window.localStorage.getItem('pa-openai-api-key') || ''
+  model.value = window.localStorage.getItem('pa-ai-model') || window.localStorage.getItem('pa-openai-model') || ''
 })
 
 function save() {
+  window.localStorage.setItem('pa-ai-provider', provider.value)
   window.localStorage.setItem('pa-ai-review-endpoint', endpoint.value.trim())
-  window.localStorage.setItem('pa-openai-api-key', apiKey.value.trim())
-  window.localStorage.setItem('pa-openai-model', model.value.trim())
+  window.localStorage.setItem('pa-ai-api-key', apiKey.value.trim())
+  window.localStorage.setItem('pa-ai-model', model.value.trim())
   emit('saved')
   emit('close')
 }
 
 function clearAll() {
+  provider.value = 'deepseek'
   endpoint.value = ''
   apiKey.value = ''
   model.value = ''
+  window.localStorage.removeItem('pa-ai-provider')
   window.localStorage.removeItem('pa-ai-review-endpoint')
+  window.localStorage.removeItem('pa-ai-api-key')
+  window.localStorage.removeItem('pa-ai-model')
   window.localStorage.removeItem('pa-openai-api-key')
   window.localStorage.removeItem('pa-openai-model')
   emit('saved')
+}
+
+function fillDeepSeekDefaults() {
+  provider.value = 'deepseek'
+  endpoint.value = ''
+  if (!model.value || model.value.startsWith('gpt')) model.value = 'deepseek-chat'
 }
 </script>
 
@@ -43,33 +56,56 @@ function clearAll() {
       <div class="modal-head">
         <div>
           <h2>AI设置</h2>
-          <p>本机使用时，留空代理接口，只填写 OpenAI API Key 和模型名。代理接口只填你自己的后端服务地址。</p>
+          <p>你使用 DeepSeek 时，选择 DeepSeek，填写 DeepSeek API Key；代理接口留空。</p>
         </div>
         <button class="icon-btn" @click="emit('close')">×</button>
       </div>
 
       <label>
-        <span>AI代理接口地址</span>
-        <input v-model="endpoint" placeholder="https://your-domain/api/review" />
+        <span>AI服务商</span>
+        <select v-model="provider" @change="provider === 'deepseek' && fillDeepSeekDefaults()">
+          <option value="deepseek">DeepSeek</option>
+          <option value="openai">OpenAI</option>
+          <option value="proxy">自定义代理</option>
+        </select>
       </label>
-      <div class="field-help">
-        不要在这里填写 https://api.openai.com/v1/...；那会被当成代理接口，容易出现 401。
-      </div>
-
-      <div class="divider">或本机直接调用 OpenAI</div>
 
       <label>
-        <span>OpenAI API Key</span>
-        <input v-model="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
+        <span>AI代理接口地址</span>
+        <input
+          v-model="endpoint"
+          :disabled="provider !== 'proxy'"
+          placeholder="仅自定义代理需要填写，例如 https://your-domain/api/review"
+        />
+      </label>
+      <div class="field-help">
+        DeepSeek 和 OpenAI 直连时，这里请留空；自定义代理才需要填写你自己的后端接口。
+      </div>
+
+      <div class="divider">{{ provider === 'deepseek' ? 'DeepSeek 直连' : provider === 'openai' ? 'OpenAI 直连' : '代理接口模式' }}</div>
+
+      <label>
+        <span>{{ provider === 'deepseek' ? 'DeepSeek API Key' : 'API Key' }}</span>
+        <input
+          v-model="apiKey"
+          type="password"
+          :disabled="provider === 'proxy'"
+          placeholder="DeepSeek/OpenAI 的 API Key"
+          autocomplete="off"
+        />
       </label>
 
       <label>
         <span>模型名</span>
-        <input v-model="model" placeholder="例如你账号可用的 gpt 系列模型名" />
+        <input
+          v-model="model"
+          :disabled="provider === 'proxy'"
+          :placeholder="provider === 'deepseek' ? 'deepseek-chat' : '填写你账号可用的模型名'"
+        />
       </label>
 
       <div class="note">
-        出现 401 时，通常是 Key 不完整、Key 没有权限、填错位置，或代理接口没有正确转发 Authorization。API Key 会保存在本机 localStorage 中，不要把带 Key 的网页部署给别人使用。
+        DeepSeek 默认接口为 https://api.deepseek.com/chat/completions，默认模型为 deepseek-chat。出现 401 时，通常是服务商选错、Key 不完整或模型/权限不匹配。
       </div>
 
       <div class="actions">
@@ -131,7 +167,8 @@ label {
   font-size: 12px;
 }
 
-input {
+input,
+select {
   height: 34px;
   padding: 6px 9px;
   border-radius: 6px;

@@ -101,12 +101,13 @@ time,open,high,low,close,volume
 
 ## AI 点评接口
 
-前端不会保存或暴露 OpenAI API Key。交易点评会向可配置的后端代理发送请求：
+右上角点击“AI设置”后可选择三种模式：
 
-- 环境变量：`VITE_AI_REVIEW_ENDPOINT`
-- 或浏览器本地配置：`localStorage.setItem('pa-ai-review-endpoint', 'https://your-domain/api/review')`
-- 或在页面右上角点击“AI设置”填写代理接口地址
-- 本机/桌面版也可在“AI设置”里填写 OpenAI API Key 和模型名直接调用
+- `DeepSeek`：填写 DeepSeek API Key，模型默认 `deepseek-chat`，代理接口留空。
+- `OpenAI`：填写 OpenAI API Key 和模型名，代理接口留空。
+- `自定义代理`：填写你自己的后端接口地址，由后端转发到任意模型服务。
+
+DeepSeek 默认直连地址为 `https://api.deepseek.com/chat/completions`。
 
 请求体包含：
 

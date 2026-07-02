@@ -282,6 +282,7 @@ export function useChart() {
   const trades = reactive([])
   const barReviews = reactive({})
   const coachFeedbacks = reactive({})
+  const reviewRequestStates = reactive({})
   const mistakes = reactive({})
   const tradeNotes = reactive({})
   assignReactiveArray(orders, savedSession?.orders)
@@ -315,6 +316,12 @@ export function useChart() {
     }
     const key = currentReviewKey.value
     return key && coachFeedbacks[key] ? coachFeedbacks[key] : null
+  })
+  const currentReviewRequestState = computed(() => {
+    const key = selectedTradeId.value ? `trade:${selectedTradeId.value}` : currentReviewKey.value
+    return key && reviewRequestStates[key]
+      ? reviewRequestStates[key]
+      : { loading: false, error: '', startedAt: '', finishedAt: '' }
   })
   const currentMistake = computed(() => {
     const key = currentReviewKey.value
@@ -681,6 +688,13 @@ export function useChart() {
     if (!currentBar.value) return
     const selected = selectedTrade.value
     const key = selected?.id ? `trade:${selected.id}` : currentReviewKey.value
+    if (reviewRequestStates[key]?.loading) return
+    reviewRequestStates[key] = {
+      loading: true,
+      error: '',
+      startedAt: new Date().toISOString(),
+      finishedAt: ''
+    }
     const payload = buildCoachPayload({
       bars: allBars.value,
       replayIndex: replayIndex.value,
@@ -689,8 +703,24 @@ export function useChart() {
       positions,
       selectedTrade: selected ? { ...selected, note: tradeNotes[selected.id] || '' } : null
     })
-    coachFeedbacks[key] = await requestAiCoachFeedback(payload)
-    saveSession()
+    try {
+      coachFeedbacks[key] = await requestAiCoachFeedback(payload)
+      reviewRequestStates[key] = {
+        ...reviewRequestStates[key],
+        loading: false,
+        error: '',
+        finishedAt: new Date().toISOString()
+      }
+      saveSession()
+    } catch (err) {
+      reviewRequestStates[key] = {
+        ...reviewRequestStates[key],
+        loading: false,
+        error: err?.message || 'AI点评失败',
+        finishedAt: new Date().toISOString()
+      }
+      throw err
+    }
   }
 
   function markCurrentMistake(reason = '') {
@@ -1431,6 +1461,7 @@ export function useChart() {
     barReviews,
     currentReview,
     currentCoachFeedback,
+    currentReviewRequestState,
     currentMistake,
     reviewStats,
     sessionReport,

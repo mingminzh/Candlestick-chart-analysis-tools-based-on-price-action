@@ -10,6 +10,7 @@ const props = defineProps({
   selectedTrade: { type: Object, default: null },
   selectedTradeId: { type: String, default: '' },
   feedback: { type: Object, default: null },
+  reviewState: { type: Object, default: () => ({ loading: false, error: '' }) },
   realized: { type: Number, required: true },
   unrealized: { type: Number, required: true },
   equity: { type: Number, required: true },
@@ -41,6 +42,7 @@ const emit = defineEmits([
 
 const currentPrice = computed(() => props.currentBar?.close?.toFixed(2) ?? '-')
 const pnlClass = (v) => (v > 0 ? 'pos' : v < 0 ? 'neg' : '')
+const isReviewing = computed(() => Boolean(props.reviewState?.loading))
 const pendingPrice = ref('')
 const reviewCollapsed = ref(false)
 const isListening = ref(false)
@@ -87,6 +89,10 @@ function pendingOrderPrice() {
 
 function setPendingFromCurrent() {
   if (props.currentBar?.close) pendingPrice.value = fmt(props.currentBar.close)
+}
+
+function isTradeReviewing(tradeId) {
+  return props.selectedTradeId === tradeId && isReviewing.value
 }
 
 function placePending(type, side) {
@@ -423,14 +429,26 @@ function stopVoiceInput() {
               {{ t.exitReason }} 平仓
             </span>
             <div class="trade-actions">
-              <button class="mini primary" @click.stop="emit('review-trade', t.id)">点评</button>
+              <button
+                class="mini primary"
+                :disabled="isTradeReviewing(t.id)"
+                @click.stop="emit('review-trade', t.id)"
+              >
+                {{ isTradeReviewing(t.id) ? '点评中…' : '点评' }}
+              </button>
               <button class="mini danger" @click.stop="emit('delete-trade', t.id)">删除</button>
             </div>
           </div>
           <div v-else class="line2">
             <span class="meta">手动平仓</span>
             <div class="trade-actions">
-              <button class="mini primary" @click.stop="emit('review-trade', t.id)">点评</button>
+              <button
+                class="mini primary"
+                :disabled="isTradeReviewing(t.id)"
+                @click.stop="emit('review-trade', t.id)"
+              >
+                {{ isTradeReviewing(t.id) ? '点评中…' : '点评' }}
+              </button>
               <button class="mini danger" @click.stop="emit('delete-trade', t.id)">删除</button>
             </div>
           </div>
@@ -457,6 +475,14 @@ function stopVoiceInput() {
             placeholder="可以说出你的入场理由、当时看到的形态、犹豫点或执行问题。"
             @input="(e) => updateSelectedTradeNote(e.target.value)"
           ></textarea>
+        </div>
+        <div v-if="isReviewing" class="review-progress">
+          <div class="progress-head">
+            <span>AI正在分析这笔交易</span>
+            <span>请求中</span>
+          </div>
+          <div class="progress-bar"><span></span></div>
+          <div class="progress-text">正在读取入场点之后的K线、成交结果、备注和价格行为结构。</div>
         </div>
         <div class="review-head">
           <div>
@@ -518,7 +544,19 @@ function stopVoiceInput() {
             @input="(e) => updateSelectedTradeNote(e.target.value)"
           ></textarea>
         </div>
-        已选中交易，点击该笔记录右侧“点评”生成分析。
+        <div v-if="isReviewing" class="review-progress">
+          <div class="progress-head">
+            <span>AI正在分析这笔交易</span>
+            <span>请求中</span>
+          </div>
+          <div class="progress-bar"><span></span></div>
+          <div class="progress-text">正在连接AI接口并生成点评，请稍等。</div>
+        </div>
+        <div v-else-if="reviewState?.error" class="review-error">
+          <strong>AI点评失败</strong>
+          <span>{{ reviewState.error }}</span>
+        </div>
+        <div v-else>已选中交易，点击该笔记录右侧“点评”生成分析。</div>
       </div>
     </div>
   </div>
@@ -759,6 +797,64 @@ button.ghost {
   text-align: center;
 }
 
+.review-progress {
+  margin: 8px 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(88, 166, 255, 0.08);
+  border: 1px solid rgba(88, 166, 255, 0.24);
+  color: #c9d1d9;
+  text-align: left;
+}
+
+.progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: #58a6ff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.progress-bar {
+  position: relative;
+  height: 4px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(88, 166, 255, 0.18);
+}
+
+.progress-bar span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 38%;
+  border-radius: inherit;
+  background: #58a6ff;
+  animation: review-progress 1.1s ease-in-out infinite;
+}
+
+.progress-text {
+  margin-top: 7px;
+  color: #8b949e;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.review-error {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(239, 83, 80, 0.1);
+  border: 1px solid rgba(239, 83, 80, 0.28);
+  color: #ffb4ad;
+  text-align: left;
+  line-height: 1.5;
+}
+
 .voice-note {
   display: flex;
   flex-direction: column;
@@ -928,6 +1024,23 @@ button.ghost {
 .mini {
   padding: 2px 8px;
   font-size: 11px;
+}
+
+.mini:disabled {
+  cursor: progress;
+  opacity: 0.65;
+}
+
+@keyframes review-progress {
+  0% {
+    transform: translateX(-110%);
+  }
+  55% {
+    transform: translateX(95%);
+  }
+  100% {
+    transform: translateX(260%);
+  }
 }
 
 .link-btn {

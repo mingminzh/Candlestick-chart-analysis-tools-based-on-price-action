@@ -56,6 +56,7 @@ const {
   selectedTradeId,
   currentReview,
   currentCoachFeedback,
+  currentReviewRequestState,
   sessionReport,
   realizedPnL,
   unrealizedPnL,
@@ -290,6 +291,7 @@ async function onCsvSelected(e) {
             :selected-trade="selectedTrade"
             :selected-trade-id="selectedTradeId"
             :feedback="currentCoachFeedback"
+            :review-state="currentReviewRequestState"
             :realized="realizedPnL"
             :unrealized="unrealizedPnL"
             :equity="equity"

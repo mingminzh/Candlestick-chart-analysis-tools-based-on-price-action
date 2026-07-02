@@ -64,17 +64,34 @@ export function buildAiReviewRequest(payload) {
 
 function aiEndpoint() {
   if (typeof window === 'undefined') return ''
-  return window.localStorage.getItem('pa-ai-review-endpoint') || import.meta.env.VITE_AI_REVIEW_ENDPOINT || ''
+  return (window.localStorage.getItem('pa-ai-review-endpoint') || import.meta.env.VITE_AI_REVIEW_ENDPOINT || '').trim()
 }
 
 function openAiApiKey() {
   if (typeof window === 'undefined') return ''
-  return window.localStorage.getItem('pa-openai-api-key') || ''
+  return (window.localStorage.getItem('pa-openai-api-key') || '').trim()
 }
 
 function openAiModel() {
   if (typeof window === 'undefined') return ''
-  return window.localStorage.getItem('pa-openai-model') || ''
+  return (window.localStorage.getItem('pa-openai-model') || '').trim()
+}
+
+function isOpenAiEndpoint(endpoint) {
+  return /^https:\/\/api\.openai\.com\/v1\//i.test(endpoint)
+}
+
+async function readErrorMessage(res) {
+  try {
+    const data = await res.json()
+    return data?.error?.message || data?.message || ''
+  } catch (err) {
+    return ''
+  }
+}
+
+function authErrorMessage(prefix, message = '') {
+  return `${prefix}: 401。请检查 AI设置 中的 API Key 是否完整、是否有权限、是否填错了位置。若本机直连 OpenAI，请留空“AI代理接口地址”，只填写 OpenAI API Key 和模型名。${message ? ` 原始信息: ${message}` : ''}`
 }
 
 function normalizeFeedback(data, payload) {
@@ -98,9 +115,15 @@ function normalizeFeedback(data, payload) {
 
 export async function requestAiCoachFeedback(payload) {
   const endpoint = aiEndpoint()
+  const apiKey = openAiApiKey()
+  const model = openAiModel()
+  if (endpoint && isOpenAiEndpoint(endpoint)) {
+    if (!apiKey || !model) {
+      throw new Error('检测到“AI代理接口地址”填写的是 OpenAI 官方地址。请改为留空代理接口，并填写 OpenAI API Key 与模型名。')
+    }
+    return requestOpenAiDirect({ apiKey, model, payload })
+  }
   if (!endpoint) {
-    const apiKey = openAiApiKey()
-    const model = openAiModel()
     if (apiKey && model) {
       return requestOpenAiDirect({ apiKey, model, payload })
     }
@@ -140,7 +163,9 @@ export async function requestAiCoachFeedback(payload) {
     body: JSON.stringify(buildAiReviewRequest(payload))
   })
   if (!res.ok) {
-    throw new Error(`AI 点评接口请求失败: ${res.status}`)
+    const message = await readErrorMessage(res)
+    if (res.status === 401) throw new Error(authErrorMessage('AI 点评接口鉴权失败', message))
+    throw new Error(`AI 点评接口请求失败: ${res.status}${message ? ` ${message}` : ''}`)
   }
   return normalizeFeedback(await res.json(), payload)
 }
@@ -170,7 +195,9 @@ async function requestOpenAiDirect({ apiKey, model, payload }) {
     })
   })
   if (!res.ok) {
-    throw new Error(`OpenAI 请求失败: ${res.status}`)
+    const message = await readErrorMessage(res)
+    if (res.status === 401) throw new Error(authErrorMessage('OpenAI 鉴权失败', message))
+    throw new Error(`OpenAI 请求失败: ${res.status}${message ? ` ${message}` : ''}`)
   }
   const data = await res.json()
   const content = data?.choices?.[0]?.message?.content || '{}'

@@ -43,7 +43,7 @@ function clearAll() {
       <div class="modal-head">
         <div>
           <h2>AI设置</h2>
-          <p>优先推荐填写自己的后端代理接口；本机使用也可以直接填写 OpenAI API Key。</p>
+          <p>本机使用时，留空代理接口，只填写 OpenAI API Key 和模型名。代理接口只填你自己的后端服务地址。</p>
         </div>
         <button class="icon-btn" @click="emit('close')">×</button>
       </div>
@@ -52,6 +52,9 @@ function clearAll() {
         <span>AI代理接口地址</span>
         <input v-model="endpoint" placeholder="https://your-domain/api/review" />
       </label>
+      <div class="field-help">
+        不要在这里填写 https://api.openai.com/v1/...；那会被当成代理接口，容易出现 401。
+      </div>
 
       <div class="divider">或本机直接调用 OpenAI</div>
 
@@ -62,11 +65,11 @@ function clearAll() {
 
       <label>
         <span>模型名</span>
-        <input v-model="model" placeholder="填写你账号可用的模型名" />
+        <input v-model="model" placeholder="例如你账号可用的 gpt 系列模型名" />
       </label>
 
       <div class="note">
-        API Key 会保存在本机浏览器/桌面应用的 localStorage 中。不要把带 Key 的网页部署给别人使用。
+        出现 401 时，通常是 Key 不完整、Key 没有权限、填错位置，或代理接口没有正确转发 Authorization。API Key 会保存在本机 localStorage 中，不要把带 Key 的网页部署给别人使用。
       </div>
 
       <div class="actions">
@@ -161,6 +164,13 @@ input {
   color: #c9d1d9;
   font-size: 12px;
   line-height: 1.55;
+}
+
+.field-help {
+  margin-top: -6px;
+  color: #d29922;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .actions {

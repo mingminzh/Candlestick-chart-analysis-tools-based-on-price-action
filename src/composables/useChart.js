@@ -172,6 +172,27 @@ function summarizeTrades(trades) {
   }
 }
 
+function summarizeMistakeTags(feedbacks, trades) {
+  const byId = new Map(trades.map(trade => [trade.id, trade]))
+  const stats = {}
+  for (const [key, feedback] of Object.entries(feedbacks || {})) {
+    const tags = Array.isArray(feedback?.mistakeTags) ? feedback.mistakeTags : []
+    if (!tags.length) continue
+    const tradeId = key.startsWith('trade:') ? key.slice(6) : feedback?.payloadPreview?.selectedTradeId
+    const pnl = Number(byId.get(tradeId)?.pnl || 0)
+    for (const tag of tags) {
+      const name = String(tag || '').trim()
+      if (!name) continue
+      if (!stats[name]) stats[name] = { count: 0, totalPnl: 0, wins: 0, losses: 0 }
+      stats[name].count += 1
+      stats[name].totalPnl += pnl
+      if (pnl > 0) stats[name].wins += 1
+      if (pnl < 0) stats[name].losses += 1
+    }
+  }
+  return stats
+}
+
 function timeframeSeconds(tf) {
   const raw = String(tf || '1H')
   const n = Number.parseInt(raw, 10) || 1
@@ -179,6 +200,20 @@ function timeframeSeconds(tf) {
   if (/h$/i.test(raw)) return n * 3600
   if (/d$/i.test(raw)) return n * 86400
   return 3600
+}
+
+function nearestBarIndexByTime(bars, time) {
+  if (!Array.isArray(bars) || !bars.length || !time) return -1
+  let bestIndex = -1
+  let bestDistance = Infinity
+  bars.forEach((bar, index) => {
+    const distance = Math.abs(Number(bar.time) - Number(time))
+    if (distance < bestDistance) {
+      bestDistance = distance
+      bestIndex = index
+    }
+  })
+  return bestIndex
 }
 
 function chinaEightSessionKey(time) {
@@ -349,6 +384,7 @@ export function useChart() {
       reviewRate: replayIndex.value >= 0 ? reviewRecords.length / (replayIndex.value + 1) : 0,
       reviewStats: reviewStats.value,
       tradeStats: summarizeTrades(trades),
+      mistakeTagStats: summarizeMistakeTags(coachFeedbacks, trades),
       recentTrades: trades.slice().reverse().slice(0, 12),
       openPositions: positions.length,
       pendingOrders: orders.length,
@@ -1350,6 +1386,16 @@ export function useChart() {
 
   function selectTradeForReview(tradeId) {
     selectedTradeId.value = tradeId || ''
+    const trade = trades.find(t => t.id === tradeId)
+    if (trade) {
+      const closeIndex = nearestBarIndexByTime(allBars.value, trade.closeTime || trade.openTime)
+      const openIndex = nearestBarIndexByTime(allBars.value, trade.openTime)
+      const targetIndex = Math.max(closeIndex, openIndex + 20)
+      if (targetIndex >= 0) {
+        replayIndex.value = Math.min(allBars.value.length - 1, Math.max(visibleStartIndex.value, targetIndex))
+        renderReplayWindow()
+      }
+    }
     saveSession()
   }
 
@@ -1357,6 +1403,35 @@ export function useChart() {
     if (!tradeId) return
     tradeNotes[tradeId] = String(note || '')
     saveSession()
+  }
+
+  function exportReviewData() {
+    const data = {
+      exportedAt: new Date().toISOString(),
+      symbol: symbol.value,
+      timeframe: timeframe.value,
+      dataset: {
+        source: dataSource.value,
+        name: datasetName.value,
+        barsCount: allBars.value.length
+      },
+      report: sessionReport.value,
+      trades: trades.map(trade => ({ ...trade })),
+      coachFeedbacks: Object.fromEntries(
+        Object.entries(coachFeedbacks).map(([key, value]) => [key, { ...value }])
+      )
+    }
+    const json = JSON.stringify(data, null, 2)
+    const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+    a.href = url
+    a.download = `price-action-review-${symbol.value}-${timeframe.value}-${stamp}.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
   }
 
   function saveSession() {
@@ -1485,6 +1560,7 @@ export function useChart() {
     deleteTrade,
     selectTradeForReview,
     updateTradeNote,
+    exportReviewData,
     updateCurrentReview,
     clearCurrentReview,
     runCoachForCurrentBar,

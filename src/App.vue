@@ -78,6 +78,7 @@ const {
   deleteTrade,
   selectTradeForReview,
   updateTradeNote,
+  exportReviewData,
   runCoachForCurrentBar
 } = useChart()
 
@@ -321,6 +322,7 @@ async function onCsvSelected(e) {
           <ReportPanel
             v-else
             :report="sessionReport"
+            @export-reviews="exportReviewData"
           />
         </div>
       </aside>

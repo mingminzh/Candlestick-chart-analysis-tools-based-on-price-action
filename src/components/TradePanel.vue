@@ -43,6 +43,16 @@ const emit = defineEmits([
 const currentPrice = computed(() => props.currentBar?.close?.toFixed(2) ?? '-')
 const pnlClass = (v) => (v > 0 ? 'pos' : v < 0 ? 'neg' : '')
 const isReviewing = computed(() => Boolean(props.reviewState?.loading))
+const scoreEntries = computed(() => {
+  const scores = props.feedback?.scores || {}
+  return [
+    ['背景', scores.context],
+    ['Setup', scores.setup],
+    ['管理', scores.management],
+    ['纪律', scores.discipline],
+    ['总分', scores.total ?? props.feedback?.score]
+  ].filter(([, value]) => value !== undefined && value !== null && value !== '')
+})
 const pendingPrice = ref('')
 const reviewCollapsed = ref(false)
 const isListening = ref(false)
@@ -501,6 +511,50 @@ function stopVoiceInput() {
           {{ feedback.summary }}
         </div>
         <template v-if="!reviewCollapsed">
+          <div v-if="feedback.verdictProbability" class="review-card verdict-card">
+            <div class="review-title">概率判断</div>
+            <p>
+              <strong>{{ feedback.verdictProbability.label || '未定' }}</strong>
+              <span v-if="feedback.verdictProbability.probabilityText">
+                · {{ feedback.verdictProbability.probabilityText }}
+              </span>
+              <span v-if="feedback.verdictProbability.confidence !== undefined">
+                · 置信度 {{ feedback.verdictProbability.confidence }}
+              </span>
+            </p>
+          </div>
+          <div v-if="feedback.keyWrongAssumption" class="review-card warn-card">
+            <div class="review-title">关键错误假设</div>
+            <p><strong>{{ feedback.keyWrongAssumption.title }}</strong></p>
+            <p>{{ feedback.keyWrongAssumption.detail }}</p>
+            <ul v-if="feedback.keyWrongAssumption.evidence?.length">
+              <li v-for="item in feedback.keyWrongAssumption.evidence" :key="item">{{ item }}</li>
+            </ul>
+          </div>
+          <div v-if="scoreEntries.length" class="score-grid">
+            <div v-for="[name, value] in scoreEntries" :key="name" class="score-box">
+              <span>{{ name }}</span>
+              <b>{{ fmt(value, 0) }}</b>
+            </div>
+          </div>
+          <div v-if="feedback.evidence?.length" class="review-card evidence-card">
+            <div class="review-title">证据链</div>
+            <ul>
+              <li v-for="item in feedback.evidence" :key="item.ref + item.point">
+                <strong>{{ item.ref }}</strong>: {{ item.point }}
+              </li>
+            </ul>
+          </div>
+          <div v-if="feedback.ruleRefs?.length || feedback.mistakeTags?.length" class="tag-panel">
+            <div v-if="feedback.ruleRefs?.length" class="tag-row">
+              <span>规则引用</span>
+              <b v-for="item in feedback.ruleRefs" :key="item">{{ item }}</b>
+            </div>
+            <div v-if="feedback.mistakeTags?.length" class="tag-row danger-tags">
+              <span>错误标签</span>
+              <b v-for="item in feedback.mistakeTags" :key="item">{{ item }}</b>
+            </div>
+          </div>
           <div v-if="feedback.sections?.length" class="review-sections">
             <div v-for="section in feedback.sections" :key="section.title" class="review-card">
               <div class="review-title">{{ section.title }}</div>
@@ -926,10 +980,90 @@ button.ghost {
   border-left-color: #26a69a;
 }
 
+.review-card.verdict-card {
+  border-left-color: #a371f7;
+}
+
+.review-card.evidence-card {
+  border-left-color: #79c0ff;
+}
+
 .review-title {
   color: #58a6ff;
   font-size: 12px;
   font-weight: 700;
+}
+
+.score-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.score-box {
+  min-width: 0;
+  padding: 7px 6px;
+  border-radius: 5px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  text-align: center;
+}
+
+.score-box span {
+  display: block;
+  color: #8b949e;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.score-box b {
+  display: block;
+  margin-top: 3px;
+  color: #e6edf3;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tag-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 5px;
+  background: #161b22;
+  border: 1px solid #30363d;
+}
+
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+
+.tag-row span {
+  width: 52px;
+  color: #8b949e;
+  font-size: 11px;
+}
+
+.tag-row b {
+  max-width: 100%;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(88, 166, 255, 0.12);
+  color: #79c0ff;
+  border: 1px solid rgba(88, 166, 255, 0.25);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.danger-tags b {
+  background: rgba(239, 83, 80, 0.1);
+  color: #ffb4ad;
+  border-color: rgba(239, 83, 80, 0.25);
 }
 
 .review-card p,

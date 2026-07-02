@@ -5,6 +5,8 @@ const props = defineProps({
   report: { type: Object, required: true }
 })
 
+const emit = defineEmits(['export-reviews'])
+
 const mainMetrics = computed(() => [
   { label: '已判读K线', value: props.report.reviewedBars },
   { label: '判读覆盖', value: pct(props.report.reviewRate) },
@@ -46,8 +48,12 @@ function fmtTime(time) {
 
 function sortedEntries(obj) {
   return Object.entries(obj || {})
-    .filter(([, value]) => value > 0)
-    .sort((a, b) => b[1] - a[1])
+    .filter(([, value]) => (typeof value === 'number' ? value : value?.count || 0) > 0)
+    .sort((a, b) => {
+      const av = typeof a[1] === 'number' ? a[1] : a[1]?.count || 0
+      const bv = typeof b[1] === 'number' ? b[1] : b[1]?.count || 0
+      return bv - av
+    })
 }
 </script>
 
@@ -58,7 +64,10 @@ function sortedEntries(obj) {
         <div class="title">会话报告</div>
         <div class="sub">{{ report.totalVisibleBars }} / {{ report.totalBars }} 根已显示</div>
       </div>
-      <div class="pill">{{ report.openPositions }} 持仓 · {{ report.pendingOrders }} 委托</div>
+      <div class="head-actions">
+        <button class="mini" @click="emit('export-reviews')">导出JSON</button>
+        <div class="pill">{{ report.openPositions }} 持仓 · {{ report.pendingOrders }} 委托</div>
+      </div>
     </div>
 
     <div class="metrics">
@@ -95,6 +104,20 @@ function sortedEntries(obj) {
         <div>
           <span>盈亏因子</span>
           <b>{{ report.tradeStats.profitFactor === Infinity ? '∞' : fmt(report.tradeStats.profitFactor) }}</b>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="title">AI错误标签</div>
+      <div v-if="!sortedEntries(report.mistakeTagStats).length" class="empty">暂无AI错误标签</div>
+      <div v-else class="tag-stats">
+        <div v-for="[name, stat] in sortedEntries(report.mistakeTagStats)" :key="name" class="tag-row">
+          <div>
+            <b>{{ name }}</b>
+            <span>{{ stat.count }} 次 · 盈 {{ stat.wins }} / 亏 {{ stat.losses }}</span>
+          </div>
+          <em :class="pnlTone(stat.totalPnl)">{{ money(stat.totalPnl) }}</em>
         </div>
       </div>
     </div>
@@ -141,6 +164,14 @@ function sortedEntries(obj) {
   align-items: flex-start;
 }
 
+.head-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
 .title {
   font-size: 12px;
   font-weight: 600;
@@ -162,6 +193,12 @@ function sortedEntries(obj) {
   border: 1px solid #30363d;
   color: #8b949e;
   font-size: 12px;
+}
+
+.mini {
+  min-height: 24px;
+  padding: 3px 8px;
+  font-size: 11px;
 }
 
 .metrics {
@@ -259,6 +296,53 @@ function sortedEntries(obj) {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.tag-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tag-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px;
+  background: #0d1117;
+  border: 1px solid #21262d;
+  border-radius: 6px;
+}
+
+.tag-row div {
+  min-width: 0;
+}
+
+.tag-row b,
+.tag-row span {
+  display: block;
+}
+
+.tag-row b {
+  color: #e6edf3;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-row span {
+  margin-top: 3px;
+  color: #8b949e;
+  font-size: 11px;
+}
+
+.tag-row em {
+  flex-shrink: 0;
+  color: #c9d1d9;
+  font-size: 12px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
 }
 
 .trade-row {

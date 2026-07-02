@@ -205,8 +205,8 @@ export function useChart() {
   const selectedTradeId = ref(savedSession?.selectedTradeId || '')
   const barCountSettings = reactive({
     enabled: savedSession?.barCountSettings?.enabled ?? true,
-    reminderInterval: savedSession?.barCountSettings?.reminderInterval ?? 5,
-    reminderTargets: savedSession?.barCountSettings?.reminderTargets || ''
+    displayInterval: savedSession?.barCountSettings?.displayInterval ?? savedSession?.barCountSettings?.reminderInterval ?? 5,
+    extraBars: savedSession?.barCountSettings?.extraBars ?? savedSession?.barCountSettings?.reminderTargets ?? ''
   })
 
   const visibleStartIndex = computed(() => Math.min(DEFAULT_CONTEXT_BARS - 1, Math.max(allBars.value.length - 1, 0)))
@@ -1208,37 +1208,38 @@ export function useChart() {
       chart.setBarMarkers([])
       return
     }
-    const interval = Math.max(0, Number(barCountSettings.reminderInterval) || 0)
-    const targetSet = new Set(
-      String(barCountSettings.reminderTargets || '')
+    const interval = Math.max(1, Number(barCountSettings.displayInterval) || 1)
+    const extraSet = new Set(
+      String(barCountSettings.extraBars || '')
         .split(/[,，\s]+/)
         .map(v => Number.parseInt(v, 10))
         .filter(v => Number.isInteger(v) && v > 0)
     )
-    const markers = allBars.value.slice(0, replayIndex.value + 1).map((bar, idx) => {
-      const barNo = idx + 1
-      const isCurrent = idx === replayIndex.value
-      const isTarget = targetSet.has(barNo)
-      const isInterval = interval > 0 && barNo % interval === 0
-      return {
-        time: bar.time,
-        label: isTarget || isInterval ? `★B${barNo}` : `B${barNo}`,
-        color: isCurrent ? '#f0b429' : isTarget ? '#ff7b72' : isInterval ? '#d29922' : '#58a6ff',
-        position: 'above'
-      }
-    })
+    const markers = allBars.value
+      .slice(0, replayIndex.value + 1)
+      .map((bar, idx) => ({ bar, barNo: idx + 1, isCurrent: idx === replayIndex.value }))
+      .filter(({ barNo, isCurrent }) => isCurrent || barNo === 1 || barNo % interval === 0 || extraSet.has(barNo))
+      .map(({ bar, barNo, isCurrent }) => {
+        const isExtra = extraSet.has(barNo)
+        return {
+          time: bar.time,
+          label: `B${barNo}`,
+          color: isCurrent ? '#f0b429' : isExtra ? '#ff7b72' : '#58a6ff',
+          position: 'above'
+        }
+      })
     chart.setBarMarkers(markers)
   }
 
   function updateBarCountSettings(patch) {
     if (!patch || typeof patch !== 'object') return
     if (typeof patch.enabled === 'boolean') barCountSettings.enabled = patch.enabled
-    if (Object.prototype.hasOwnProperty.call(patch, 'reminderInterval')) {
-      const interval = Number(patch.reminderInterval)
-      barCountSettings.reminderInterval = Number.isFinite(interval) && interval >= 0 ? Math.floor(interval) : 0
+    if (Object.prototype.hasOwnProperty.call(patch, 'displayInterval')) {
+      const interval = Number(patch.displayInterval)
+      barCountSettings.displayInterval = Number.isFinite(interval) && interval > 0 ? Math.floor(interval) : 1
     }
-    if (Object.prototype.hasOwnProperty.call(patch, 'reminderTargets')) {
-      barCountSettings.reminderTargets = String(patch.reminderTargets || '')
+    if (Object.prototype.hasOwnProperty.call(patch, 'extraBars')) {
+      barCountSettings.extraBars = String(patch.extraBars || '')
     }
     refreshBarCountMarkers()
     saveSession()

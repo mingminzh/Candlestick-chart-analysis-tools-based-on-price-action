@@ -8,7 +8,7 @@ const props = defineProps({
   canReplayPrev: { type: Boolean, required: true },
   isAutoPlaying: { type: Boolean, required: true },
   currentBar: { type: Object, default: null },
-  barCountSettings: { type: Object, default: () => ({ enabled: true, reminderInterval: 5, reminderTargets: '' }) }
+  barCountSettings: { type: Object, default: () => ({ enabled: true, displayInterval: 5, extraBars: '' }) }
 })
 
 const emit = defineEmits(['next', 'prev', 'reset', 'auto-toggle', 'update-count-settings'])
@@ -89,22 +89,22 @@ function updateCountSetting(patch) {
           <span>每隔</span>
           <input
             type="number"
-            min="0"
+            min="1"
             step="1"
-            :value="barCountSettings.reminderInterval"
+            :value="barCountSettings.displayInterval"
             :disabled="!barCountSettings.enabled"
-            @change="(e) => updateCountSetting({ reminderInterval: e.target.value })"
+            @change="(e) => updateCountSetting({ displayInterval: e.target.value })"
           />
-          <span>根提醒</span>
+          <span>根显示</span>
         </label>
         <label class="target-input">
-          <span>指定</span>
+          <span>额外</span>
           <input
             type="text"
             placeholder="37,91,109"
-            :value="barCountSettings.reminderTargets"
+            :value="barCountSettings.extraBars"
             :disabled="!barCountSettings.enabled"
-            @change="(e) => updateCountSetting({ reminderTargets: e.target.value })"
+            @change="(e) => updateCountSetting({ extraBars: e.target.value })"
           />
         </label>
       </div>

@@ -180,6 +180,11 @@ function timeframeSeconds(tf) {
   return 3600
 }
 
+function utcDayKey(time) {
+  const d = new Date(time * 1000)
+  return `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`
+}
+
 /**
  * 主 composable - 管理 Chart 实例和整个 demo 的状态
  *
@@ -205,8 +210,7 @@ export function useChart() {
   const selectedTradeId = ref(savedSession?.selectedTradeId || '')
   const barCountSettings = reactive({
     enabled: savedSession?.barCountSettings?.enabled ?? true,
-    displayInterval: savedSession?.barCountSettings?.displayInterval ?? savedSession?.barCountSettings?.reminderInterval ?? 5,
-    extraBars: savedSession?.barCountSettings?.extraBars ?? savedSession?.barCountSettings?.reminderTargets ?? ''
+    displayInterval: savedSession?.barCountSettings?.displayInterval ?? savedSession?.barCountSettings?.reminderInterval ?? 2
   })
 
   const visibleStartIndex = computed(() => Math.min(DEFAULT_CONTEXT_BARS - 1, Math.max(allBars.value.length - 1, 0)))
@@ -1209,25 +1213,22 @@ export function useChart() {
       return
     }
     const interval = Math.max(1, Number(barCountSettings.displayInterval) || 1)
-    const extraSet = new Set(
-      String(barCountSettings.extraBars || '')
-        .split(/[,，\s]+/)
-        .map(v => Number.parseInt(v, 10))
-        .filter(v => Number.isInteger(v) && v > 0)
-    )
-    const markers = allBars.value
-      .slice(0, replayIndex.value + 1)
-      .map((bar, idx) => ({ bar, barNo: idx + 1, isCurrent: idx === replayIndex.value }))
-      .filter(({ barNo, isCurrent }) => isCurrent || barNo === 1 || barNo % interval === 0 || extraSet.has(barNo))
-      .map(({ bar, barNo, isCurrent }) => {
-        const isExtra = extraSet.has(barNo)
-        return {
+    let count = 0
+    let previousDay = ''
+    const markers = []
+    for (const bar of allBars.value.slice(0, replayIndex.value + 1)) {
+      const day = utcDayKey(bar.time)
+      count = day !== previousDay ? 1 : count + 1
+      previousDay = day
+      if (count % interval === 0) {
+        markers.push({
           time: bar.time,
-          label: `B${barNo}`,
-          color: isCurrent ? '#f0b429' : isExtra ? '#ff7b72' : '#58a6ff',
-          position: 'above'
-        }
-      })
+          label: String(count),
+          color: '#f0b429',
+          position: 'below'
+        })
+      }
+    }
     chart.setBarMarkers(markers)
   }
 
@@ -1237,9 +1238,6 @@ export function useChart() {
     if (Object.prototype.hasOwnProperty.call(patch, 'displayInterval')) {
       const interval = Number(patch.displayInterval)
       barCountSettings.displayInterval = Number.isFinite(interval) && interval > 0 ? Math.floor(interval) : 1
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, 'extraBars')) {
-      barCountSettings.extraBars = String(patch.extraBars || '')
     }
     refreshBarCountMarkers()
     saveSession()

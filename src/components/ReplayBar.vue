@@ -8,7 +8,7 @@ const props = defineProps({
   canReplayPrev: { type: Boolean, required: true },
   isAutoPlaying: { type: Boolean, required: true },
   currentBar: { type: Object, default: null },
-  barCountSettings: { type: Object, default: () => ({ enabled: true, displayInterval: 5, extraBars: '' }) }
+  barCountSettings: { type: Object, default: () => ({ enabled: true, displayInterval: 2 }) }
 })
 
 const emit = defineEmits(['next', 'prev', 'reset', 'auto-toggle', 'update-count-settings'])
@@ -96,16 +96,6 @@ function updateCountSetting(patch) {
             @change="(e) => updateCountSetting({ displayInterval: e.target.value })"
           />
           <span>根显示</span>
-        </label>
-        <label class="target-input">
-          <span>额外</span>
-          <input
-            type="text"
-            placeholder="37,91,109"
-            :value="barCountSettings.extraBars"
-            :disabled="!barCountSettings.enabled"
-            @change="(e) => updateCountSetting({ extraBars: e.target.value })"
-          />
         </label>
       </div>
     </div>

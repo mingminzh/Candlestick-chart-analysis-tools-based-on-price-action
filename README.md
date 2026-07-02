@@ -129,6 +129,43 @@ DeepSeek 默认直连地址为 `https://api.deepseek.com/chat/completions`。
 
 成交历史中选中交易后可使用浏览器语音输入记录交易备注，点击“点评”时备注会随同交易上下文一起发给 AI 接口。
 
+## 上传 GitHub 与隐私说明
+
+上传前请确认不要提交任何真实 API Key、账户私密信息或本机个人路径。
+
+本项目默认不会把 AI Key 写入源码：
+
+- DeepSeek / OpenAI Key 保存在当前浏览器或桌面应用的 `localStorage` 中，不会进入 Git 提交。
+- `.env`、`.env.*`、`*.local`、`node_modules/`、`dist/`、`release/` 已被 `.gitignore` 忽略。
+- 如果后续需要提供环境变量示例，请只提交 `.env.example`，不要提交真实 `.env`。
+
+上传前建议执行：
+
+```bash
+git status --short
+rg -n "api[_-]?key|secret|token|bearer|sk-|deepseek|openai" -S .
+```
+
+确认没有真实密钥后提交：
+
+```bash
+git add .
+git commit -m "docs: prepare github upload"
+```
+
+如果远程仓库已经配置好：
+
+```bash
+git push -u origin feature/replay-trading-tools
+```
+
+如果还没有远程仓库：
+
+```bash
+git remote add origin https://github.com/<你的用户名>/<仓库名>.git
+git push -u origin feature/replay-trading-tools
+```
+
 ## 项目结构
 
 ```

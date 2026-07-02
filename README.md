@@ -5,6 +5,8 @@ https://space.bilibili.com/12474213?spm_id_from=333.788.upinfo.detail.click
 
 基于 **Vue 3 + Vite + @mg-exchange/charts** 的前端 demo，演示K线回放、画线和模拟交易功能。
 
+> 项目后续方向已调整为“AI价格行为复盘工作台”：K线工具只作为复盘输入载体，核心目标是基于 Al Brooks 价格行为体系进行 AI 纠偏、错题统计和本地知识库复盘。详见 [AI价格行为复盘工作台需求文档](docs/AI_REVIEW_WORKBENCH_REQUIREMENTS.md)。
+
 ## 功能特性
 
 ### 🗂 历史数据与训练会话

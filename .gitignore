@@ -15,6 +15,7 @@ release
 .env
 .env.*
 !.env.example
+knowledge_private/
 
 # Editor directories and files
 .vscode/*

@@ -1,5 +1,8 @@
 # K线回放交易 Demo
 
+基于b站Up主：dobby价格行为  的开源项目更改，以下是他b站主页地址
+https://space.bilibili.com/12474213?spm_id_from=333.788.upinfo.detail.click
+
 基于 **Vue 3 + Vite + @mg-exchange/charts** 的前端 demo，演示K线回放、画线和模拟交易功能。
 
 ## 功能特性

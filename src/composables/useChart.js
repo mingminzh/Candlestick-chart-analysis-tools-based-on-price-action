@@ -590,10 +590,28 @@ export function useChart() {
     ]
   }
 
-  function renderReplayWindow() {
+  function restoreTimeScaleSnapshot(snapshot) {
+    if (!chart || !snapshot || !chart.timeScale) return
+    const maxFirst = Math.max(0, (chart.dataSource?.length || 0) - snapshot.visibleCount)
+    chart.timeScale.barSpacing = snapshot.barSpacing
+    chart.timeScale.visibleCount = snapshot.visibleCount
+    chart.timeScale.offsetX = snapshot.offsetX
+    chart.timeScale.firstIndex = Math.min(Math.max(0, snapshot.firstIndex), maxFirst)
+    chart.scrollZoom?.updateState?.({ timeScale: chart.timeScale, totalBars: chart.dataSource?.length || 0 })
+    chart.recalcPriceRange?.()
+    chart.layers?.markAllDirty?.()
+    chart.scheduleRender?.()
+  }
+
+  function renderReplayWindow(options = {}) {
     if (!chart) return
+    const preserveTimeScale = options.preserveTimeScale ?? true
+    const timeScaleSnapshot = preserveTimeScale && chart.timeScale
+      ? { ...chart.timeScale }
+      : null
     const drawings = typeof chart.getDrawings === 'function' ? chart.getDrawings() : []
     chart.setData(replayDisplayBars())
+    restoreTimeScaleSnapshot(timeScaleSnapshot)
     const afterDrawings = typeof chart.getDrawings === 'function' ? chart.getDrawings() : []
     if (drawings.length && !afterDrawings.length && typeof chart.loadDrawings === 'function') {
       chart.loadDrawings(drawings)
@@ -626,7 +644,7 @@ export function useChart() {
     if (!chart) return
     stopAutoPlay()
     replayIndex.value = visibleStartIndex.value
-    renderReplayWindow()
+    renderReplayWindow({ preserveTimeScale: false })
     saveSession()
   }
 
@@ -654,7 +672,7 @@ export function useChart() {
     replayIndex.value = visibleStartIndex.value
     resetTradingState()
     if (chart) {
-      renderReplayWindow()
+      renderReplayWindow({ preserveTimeScale: false })
     }
     saveSession()
   }

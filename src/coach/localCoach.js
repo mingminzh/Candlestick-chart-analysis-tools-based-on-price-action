@@ -69,6 +69,39 @@ function nearestIndexByTime(bars, time) {
   return best
 }
 
+function barSessionKey(time) {
+  const d = new Date(time * 1000)
+  return `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`
+}
+
+function buildBarNumberMap(bars) {
+  const numbers = new Map()
+  let count = 0
+  let previousDay = ''
+  bars.forEach((bar, index) => {
+    const day = barSessionKey(bar.time)
+    count = day !== previousDay ? 1 : count + 1
+    previousDay = day
+    numbers.set(index, count)
+  })
+  return numbers
+}
+
+function makeAiBar(bar, absoluteIndex, barNumbers) {
+  const barNo = barNumbers.get(absoluteIndex) || absoluteIndex + 1
+  return {
+    barNo,
+    displayLabel: `Bar${barNo}`,
+    absoluteIndex,
+    time: bar.time,
+    open: bar.open,
+    high: bar.high,
+    low: bar.low,
+    close: bar.close,
+    volume: bar.volume
+  }
+}
+
 function summarizeMarket(bars) {
   if (bars.length < 10) return '样本较少，优先观察最近K线的跟随和重叠。'
   const closes = bars.map(b => b.close)
@@ -121,9 +154,17 @@ export function buildCoachPayload({ bars, replayIndex, review, trades = [], posi
     : replayIndex
   const start = Math.max(0, (selectedOpenIndex >= 0 ? selectedOpenIndex : focusEndIndex) - 80)
   const end = Math.min(bars.length - 1, Math.max(0, focusEndIndex))
-  const contextBars = bars.slice(start, end + 1)
-  const currentBar = bars[end] || null
+  const barNumbers = buildBarNumberMap(bars)
+  const contextBars = bars.slice(start, end + 1).map((bar, offset) => makeAiBar(bar, start + offset, barNumbers))
+  const currentBar = bars[end] ? makeAiBar(bars[end], end, barNumbers) : null
   const recentTrades = trades.filter(t => t.closeTime && currentBar && t.closeTime <= currentBar.time).slice(-5)
+  const selectedTradeWithBars = selectedTrade ? {
+    ...selectedTrade,
+    entryBarNo: selectedOpenIndex >= 0 ? barNumbers.get(selectedOpenIndex) : undefined,
+    entryBarLabel: selectedOpenIndex >= 0 ? `Bar${barNumbers.get(selectedOpenIndex)}` : '',
+    exitBarNo: selectedCloseIndex >= 0 ? barNumbers.get(selectedCloseIndex) : undefined,
+    exitBarLabel: selectedCloseIndex >= 0 ? `Bar${barNumbers.get(selectedCloseIndex)}` : ''
+  } : null
   return {
     replayIndex: end,
     currentBar,
@@ -131,7 +172,8 @@ export function buildCoachPayload({ bars, replayIndex, review, trades = [], posi
     review,
     openPositions: positions.map(p => ({ ...p })),
     recentTrades: recentTrades.map(t => ({ ...t })),
-    selectedTrade: selectedTrade ? { ...selectedTrade } : null
+    selectedTrade: selectedTradeWithBars,
+    barLabelGuide: '引用K线时只能使用 displayLabel/entryBarLabel/exitBarLabel，例如 Bar37；time 是机器时间戳，禁止写成 Bar1773262800。'
   }
 }
 

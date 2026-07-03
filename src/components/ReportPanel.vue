@@ -150,6 +150,7 @@ function sortedEntries(obj) {
   width: 100%;
   height: 100%;
   overflow-y: auto;
+  container-type: inline-size;
 }
 
 .section {
@@ -374,5 +375,43 @@ function sortedEntries(obj) {
 .trade-row span.short {
   color: #ef5350;
   background: rgba(239, 83, 80, 0.12);
+}
+
+@container (min-width: 500px) {
+  .report-panel {
+    padding: 14px;
+  }
+
+  .metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .trade-summary {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .tag-row,
+  .trade-row,
+  .row {
+    padding: 9px 10px;
+  }
+}
+
+@container (min-width: 680px) {
+  .report-panel {
+    gap: 14px;
+  }
+
+  .section {
+    gap: 10px;
+  }
+
+  .metrics {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+
+  .title {
+    font-size: 13px;
+  }
 }
 </style>

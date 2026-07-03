@@ -247,7 +247,7 @@ async function onCsvSelected(e) {
     </div>
 
     <!-- 主体布局 -->
-    <div class="main">
+    <div class="main" :class="{ 'report-open': activeRightPanel === 'report' }">
       <!-- 左侧：画线工具 -->
       <aside class="sidebar left">
         <DrawingToolbar
@@ -448,6 +448,10 @@ async function onCsvSelected(e) {
   height: 100%;
 }
 
+.main.report-open {
+  grid-template-columns: 200px minmax(480px, 1fr) minmax(520px, 42vw);
+}
+
 .sidebar {
   min-height: 0;
   height: 100%;
@@ -507,5 +511,26 @@ async function onCsvSelected(e) {
   min-height: 0;
   min-width: 0;
   position: relative;
+}
+
+@media (max-width: 1280px) {
+  .main.report-open {
+    grid-template-columns: 170px minmax(380px, 1fr) minmax(460px, 44vw);
+  }
+}
+
+@media (max-width: 1040px) {
+  .main,
+  .main.report-open {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar.left {
+    display: none;
+  }
+
+  .sidebar.right {
+    min-height: 360px;
+  }
 }
 </style>

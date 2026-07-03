@@ -31,8 +31,8 @@ export const REVIEW_SECTION_PROMPTS = [
   }
 ]
 
-export function buildAiReviewRequest(payload) {
-  const matchedRuleCards = selectRuleCardsForReview(payload).map(card => ({
+export async function buildAiReviewRequest(payload) {
+  const matchedRuleCards = (await selectRuleCardsForReview(payload)).map(card => ({
     name: card.name,
     category: card.category,
     scenarios: card.scenarios,
@@ -195,7 +195,7 @@ export async function requestAiCoachFeedback(payload) {
   const endpoint = aiEndpoint()
   const apiKey = aiApiKey()
   const model = aiModel(provider)
-  const requestBody = buildAiReviewRequest(payload)
+  const requestBody = await buildAiReviewRequest(payload)
   const reviewPayload = requestBody.payload
 
   if (provider === 'proxy') {

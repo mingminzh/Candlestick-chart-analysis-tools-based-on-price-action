@@ -1,0 +1,23 @@
+{
+  "id": "TR-CHASE-MIDDLE-PRIVATE-001",
+  "name": "TR-追单-区间中部禁止",
+  "category": "交易区间与追单",
+  "scenarios": ["Trading Range", "区间中部", "追单", "跟随不足"],
+  "appliesTo": ["long", "short"],
+  "evidence": [
+    "入场前多根K线重叠，说明双向交易增强",
+    "价格位于近期高低点中间区域，而不是区间边缘",
+    "突破或趋势棒之后缺少第二根以上同向跟随"
+  ],
+  "commonMistakes": [
+    "把区间中部的一根强趋势棒当成趋势恢复",
+    "忽略前面已经形成Trading Range",
+    "没有等突破后跟随就直接追单"
+  ],
+  "reviewQuestions": [
+    "入场点是否在区间中部？",
+    "突破后是否有足够跟随？",
+    "如果下一根反向收回突破位，原交易假设是否失效？"
+  ],
+  "mistakeTag": "区间中部追单"
+}

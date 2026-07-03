@@ -134,6 +134,16 @@ DeepSeek 默认直连地址为 `https://api.deepseek.com/chat/completions`。
 
 成交历史中选中交易后可使用浏览器语音输入记录交易备注，点击“点评”时备注会随同交易上下文一起发给 AI 接口。
 
+### 私有规则卡
+
+桌面应用会读取本地私有规则卡目录：
+
+```text
+knowledge_private/rule-cards/
+```
+
+该目录已被 Git 忽略，不会上传。规则卡使用 JSON 格式，示例见 [RULE_CARD_JSON_EXAMPLE.json](docs/RULE_CARD_JSON_EXAMPLE.json)。
+
 ## 上传 GitHub 与隐私说明
 
 上传前请确认不要提交任何真实 API Key、账户私密信息或本机个人路径。

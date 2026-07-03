@@ -85,6 +85,27 @@ function localRuleCards() {
   return Array.isArray(parsed) ? parsed : []
 }
 
+let privateRuleCardsCache = null
+
+async function privateRuleCards() {
+  if (privateRuleCardsCache) return privateRuleCardsCache
+  if (typeof window === 'undefined' || !window.priceActionKnowledge?.readRuleCards) {
+    privateRuleCardsCache = []
+    return privateRuleCardsCache
+  }
+  try {
+    const result = await window.priceActionKnowledge.readRuleCards()
+    privateRuleCardsCache = Array.isArray(result?.cards) ? result.cards : []
+    if (result?.errors?.length) {
+      console.warn('私有规则卡读取存在错误:', result.errors)
+    }
+  } catch (err) {
+    console.warn('读取私有规则卡失败:', err)
+    privateRuleCardsCache = []
+  }
+  return privateRuleCardsCache
+}
+
 function tradeDirection(payload) {
   return payload?.selectedTrade?.side || ''
 }
@@ -117,12 +138,15 @@ function cardScore(card, payload) {
   return score
 }
 
-export function selectRuleCardsForReview(payload, limit = 4) {
-  const cards = [...BUILTIN_RULE_CARDS, ...localRuleCards()]
+export async function selectRuleCardsForReview(payload, limit = 4) {
+  const cards = [
+    ...BUILTIN_RULE_CARDS,
+    ...localRuleCards(),
+    ...await privateRuleCards()
+  ]
   return cards
     .map(card => ({ ...card, matchScore: cardScore(card, payload) }))
     .filter(card => card.matchScore > 0)
     .sort((a, b) => b.matchScore - a.matchScore)
     .slice(0, limit)
 }
-

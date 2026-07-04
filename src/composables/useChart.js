@@ -363,6 +363,17 @@ export function useChart() {
     return key && mistakes[key] ? mistakes[key] : null
   })
   const selectedTrade = computed(() => trades.find(t => t.id === selectedTradeId.value) || null)
+  const tradeReviewStatus = computed(() => Object.fromEntries(
+    trades.map(trade => {
+      const feedback = coachFeedbacks[`trade:${trade.id}`]
+      return [trade.id, {
+        reviewed: Boolean(feedback),
+        score: feedback?.scores?.total ?? feedback?.score ?? null,
+        mistakeTags: feedback?.mistakeTags || [],
+        createdAt: feedback?.createdAt || ''
+      }]
+    })
+  ))
   const reviewStats = computed(() => {
     const records = Object.values(barReviews)
     return {
@@ -1551,6 +1562,7 @@ export function useChart() {
     tradeMarkers,
     selectedTrade,
     selectedTradeId,
+    tradeReviewStatus,
     barReviews,
     currentReview,
     currentCoachFeedback,

@@ -9,6 +9,7 @@ const props = defineProps({
   tradeNotes: { type: Object, default: () => ({}) },
   selectedTrade: { type: Object, default: null },
   selectedTradeId: { type: String, default: '' },
+  tradeReviewStatus: { type: Object, default: () => ({}) },
   feedback: { type: Object, default: null },
   reviewState: { type: Object, default: () => ({ loading: false, error: '' }) },
   realized: { type: Number, required: true },
@@ -57,6 +58,9 @@ const pendingPrice = ref('')
 const reviewCollapsed = ref(false)
 const tradeHistoryCollapsed = ref(false)
 const tradeSearch = ref('')
+const directionFilter = ref('all')
+const resultFilter = ref('all')
+const reviewFilter = ref('all')
 const showAllTrades = ref(false)
 const isListening = ref(false)
 let recognition = null
@@ -70,8 +74,14 @@ const accountDraft = ref({
 const sortedTrades = computed(() => props.trades.slice().reverse())
 const filteredTrades = computed(() => {
   const keyword = tradeSearch.value.trim().toLowerCase()
-  if (!keyword) return sortedTrades.value
   return sortedTrades.value.filter((trade) => {
+    const status = reviewStatusFor(trade.id)
+    if (directionFilter.value !== 'all' && trade.side !== directionFilter.value) return false
+    if (resultFilter.value === 'win' && Number(trade.pnl || 0) <= 0) return false
+    if (resultFilter.value === 'loss' && Number(trade.pnl || 0) >= 0) return false
+    if (reviewFilter.value === 'reviewed' && !status.reviewed) return false
+    if (reviewFilter.value === 'unreviewed' && status.reviewed) return false
+    if (!keyword) return true
     const sideText = trade.side === 'long' ? '多 long 做多' : '空 short 做空'
     const noteText = props.tradeNotes[trade.id] || ''
     return [
@@ -83,11 +93,23 @@ const filteredTrades = computed(() => {
       fmt(trade.pnl),
       fmtTime(trade.openTime),
       fmtTime(trade.closeTime),
+      status.reviewed ? '已点评 reviewed' : '未点评 unreviewed',
+      status.score === null ? '' : `score ${status.score} 评分 ${status.score}`,
+      ...(status.mistakeTags || []),
       noteText
     ].filter(Boolean).join(' ').toLowerCase().includes(keyword)
   })
 })
 const visibleTrades = computed(() => showAllTrades.value ? filteredTrades.value : filteredTrades.value.slice(0, 12))
+const tradeQueueStats = computed(() => {
+  const reviewed = props.trades.filter(t => reviewStatusFor(t.id).reviewed).length
+  const losses = props.trades.filter(t => Number(t.pnl || 0) < 0).length
+  return {
+    reviewed,
+    unreviewed: Math.max(0, props.trades.length - reviewed),
+    losses
+  }
+})
 
 watch(() => props.account, (account) => {
   accountDraft.value = {
@@ -129,6 +151,10 @@ function setPendingFromCurrent() {
 
 function isTradeReviewing(tradeId) {
   return props.selectedTradeId === tradeId && isReviewing.value
+}
+
+function reviewStatusFor(tradeId) {
+  return props.tradeReviewStatus[tradeId] || { reviewed: false, score: null, mistakeTags: [] }
 }
 
 function placePending(type, side) {
@@ -465,6 +491,28 @@ function stopVoiceInput() {
         />
         <span>{{ filteredTrades.length }} 笔匹配</span>
       </div>
+      <div v-if="trades.length" class="history-summary">
+        <span>待点评 {{ tradeQueueStats.unreviewed }}</span>
+        <span>已点评 {{ tradeQueueStats.reviewed }}</span>
+        <span>亏损 {{ tradeQueueStats.losses }}</span>
+      </div>
+      <div v-if="trades.length" class="history-filters">
+        <select v-model="directionFilter">
+          <option value="all">全部方向</option>
+          <option value="long">只看多单</option>
+          <option value="short">只看空单</option>
+        </select>
+        <select v-model="resultFilter">
+          <option value="all">全部结果</option>
+          <option value="win">只看盈利</option>
+          <option value="loss">只看亏损</option>
+        </select>
+        <select v-model="reviewFilter">
+          <option value="all">全部点评</option>
+          <option value="unreviewed">未点评</option>
+          <option value="reviewed">已点评</option>
+        </select>
+      </div>
       <div v-if="trades.length && tradeHistoryCollapsed" class="history-collapsed">
         已折叠，当前选中：
         <strong v-if="selectedTrade">{{ selectedTrade.side === 'long' ? '多' : '空' }} {{ fmt(selectedTrade.entryPrice) }} → {{ fmt(selectedTrade.closePrice) }}</strong>
@@ -483,6 +531,21 @@ function stopVoiceInput() {
             <span class="qty">{{ t.quantity }}</span>
             <span class="px">{{ fmt(t.entryPrice) }} → {{ fmt(t.closePrice) }}</span>
             <span class="pnl" :class="pnlClass(t.pnl)">${{ fmt(t.pnl) }}</span>
+          </div>
+          <div class="trade-review-row">
+            <span :class="['review-badge', reviewStatusFor(t.id).reviewed ? 'done' : 'todo']">
+              {{ reviewStatusFor(t.id).reviewed ? '已点评' : '未点评' }}
+            </span>
+            <span v-if="reviewStatusFor(t.id).score !== null" class="review-score">
+              评分 {{ fmt(reviewStatusFor(t.id).score, 0) }}
+            </span>
+            <span
+              v-for="tag in reviewStatusFor(t.id).mistakeTags?.slice(0, 2)"
+              :key="t.id + tag"
+              class="review-tag"
+            >
+              {{ tag }}
+            </span>
           </div>
           <div v-if="t.exitReason" class="line2">
             <span class="meta" :class="t.exitReason === '止盈' ? 'pos' : t.exitReason === '止损' ? 'neg' : ''">
@@ -852,7 +915,8 @@ button.ghost {
   align-items: center;
 }
 
-.history-tools input {
+.history-tools input,
+.history-filters select {
   min-width: 0;
   height: 30px;
   padding: 4px 8px;
@@ -861,6 +925,30 @@ button.ghost {
   background: #0d1117;
   color: #e6edf3;
   font-size: 12px;
+}
+
+.history-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.history-summary span {
+  min-width: 0;
+  padding: 5px 6px;
+  border-radius: 5px;
+  background: #0d1117;
+  border: 1px solid #21262d;
+  color: #8b949e;
+  font-size: 11px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.history-filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
 }
 
 .history-tools span,
@@ -896,6 +984,54 @@ button.ghost {
 .trade-item.selected {
   border-color: #58a6ff;
   box-shadow: inset 3px 0 0 #1f6feb;
+}
+
+.trade-review-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+  align-items: center;
+}
+
+.review-badge,
+.review-score,
+.review-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 19px;
+  max-width: 100%;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.review-badge.done {
+  color: #26a69a;
+  background: rgba(38, 166, 154, 0.12);
+  border: 1px solid rgba(38, 166, 154, 0.24);
+}
+
+.review-badge.todo {
+  color: #d29922;
+  background: rgba(210, 153, 34, 0.12);
+  border: 1px solid rgba(210, 153, 34, 0.24);
+}
+
+.review-score {
+  color: #f0b429;
+  background: rgba(240, 180, 41, 0.1);
+  border: 1px solid rgba(240, 180, 41, 0.22);
+}
+
+.review-tag {
+  color: #79c0ff;
+  background: rgba(88, 166, 255, 0.1);
+  border: 1px solid rgba(88, 166, 255, 0.22);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .trade-actions {

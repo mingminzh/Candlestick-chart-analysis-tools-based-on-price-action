@@ -213,9 +213,29 @@ async function onReviewTrade(tradeId) {
   }
 }
 
+async function onReportReviewTrade(tradeId) {
+  selectTradeForReview(tradeId)
+  activeRightPanel.value = 'report'
+  try {
+    await runCoachForCurrentBar()
+  } catch (err) {
+    importError.value = err?.message || 'AI点评失败'
+  }
+}
+
 async function onRegenerateReview(tradeId) {
   selectTradeForReview(tradeId)
   activeRightPanel.value = 'trade'
+  try {
+    await runCoachForCurrentBar({ force: true })
+  } catch (err) {
+    importError.value = err?.message || 'AI点评失败'
+  }
+}
+
+async function onReportRegenerateReview(tradeId) {
+  selectTradeForReview(tradeId)
+  activeRightPanel.value = 'report'
   try {
     await runCoachForCurrentBar({ force: true })
   } catch (err) {
@@ -232,7 +252,7 @@ async function onAskFollowUp(tradeId, question) {
 }
 
 function onTradeMarkerSelect(tradeId) {
-  activeRightPanel.value = 'trade'
+  activeRightPanel.value = 'report'
   selectTradeForReview(tradeId)
 }
 
@@ -427,8 +447,8 @@ async function onCsvSelected(e) {
             :feedback="currentCoachFeedback"
             :review-state="currentReviewRequestState"
             @select-trade="selectTradeForReview"
-            @review-trade="onReviewTrade"
-            @regenerate-review="onRegenerateReview"
+            @review-trade="onReportReviewTrade"
+            @regenerate-review="onReportRegenerateReview"
             @ask-follow-up="onAskFollowUp"
             @delete-trade="deleteTrade"
             @export-reviews="exportReviewData"

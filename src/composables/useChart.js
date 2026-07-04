@@ -12,6 +12,9 @@ const DEFAULT_CONTEXT_BARS = 200
 const FUTURE_PADDING_BARS = 80
 const TRADE_REVIEW_AFTER_BARS = 80
 const DEFAULT_INITIAL_BALANCE = 1000
+const MIN_BAR_SPACING = 2
+const MAX_BAR_SPACING = 48
+const WHEEL_ZOOM_STEP = 1.12
 
 const replayEma20 = {
   name: 'Replay EMA20',
@@ -280,6 +283,8 @@ export function useChart() {
   // ---------- Chart 实例 ----------
   let chart = null
   let ema20IndicatorId = null
+  let tradingViewWheelTarget = null
+  let tradingViewWheelHandler = null
   const chartReady = ref(false)
 
   // ---------- 回放状态 ----------
@@ -422,15 +427,14 @@ export function useChart() {
     if (!chart || !Array.isArray(trades) || !trades.length) return []
     const scale = chart.timeScale
     const priceScale = chart.priceScale
-    const dataSource = chart.dataSource
-    if (!scale || !priceScale || !dataSource) return []
+    if (!scale || !priceScale) return []
     const chartWidth = chart.chartWidth || chartContainerWidth()
     const paneHeight = chart.paneManager?.getMain?.().height || chart.chartHeight || chartContainerHeight()
     const first = Math.floor(scale.firstIndex) - 2
     const last = Math.ceil(scale.firstIndex + scale.visibleCount) + 2
     return trades.map(trade => {
-      const idx = dataSource.nearestIndex?.(trade.openTime)
-      if (!Number.isFinite(idx) || idx < first || idx > last) return null
+      const idx = nearestBarIndexByTime(allBars.value, trade.openTime)
+      if (!Number.isFinite(idx) || idx < 0 || idx > replayIndex.value || idx < first || idx > last) return null
       const x = (idx - scale.firstIndex) * scale.barSpacing + scale.offsetX + scale.barSpacing / 2
       const y = priceToY(trade.entryPrice, priceScale, paneHeight)
       if (!Number.isFinite(x) || !Number.isFinite(y) || x < -24 || x > chartWidth + 24 || y < -24 || y > paneHeight + 24) return null
@@ -483,6 +487,7 @@ export function useChart() {
   function initChart(container) {
     // 防御性：如果已经有 chart 实例（HMR 或重复挂载），先销毁
     if (chart) {
+      uninstallTradingViewWheelZoom()
       try { chart.destroy() } catch (e) {}
       chart = null
       ema20IndicatorId = null
@@ -590,6 +595,7 @@ export function useChart() {
     })
 
     chartReady.value = true
+    installTradingViewWheelZoom()
     ensureCoreIndicators()
     restoreChartDecorations()
     markerRefreshTimer = window.setInterval(refreshTradeMarkers, 250)
@@ -605,6 +611,61 @@ export function useChart() {
 
   function setChartScrollZoom(enabled) {
     if (chart?.scrollZoom) chart.scrollZoom.enabled = Boolean(enabled)
+  }
+
+  function installTradingViewWheelZoom() {
+    uninstallTradingViewWheelZoom()
+    if (!chart?.container) return
+    tradingViewWheelTarget = chart.container
+    tradingViewWheelHandler = (event) => {
+      if (!chart?.timeScale) return
+      if (chart.scrollZoom?.enabled === false || selectedDrawingActive.value || activeDrawingTool.value) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        return
+      }
+      const scale = chart.timeScale
+      const totalBars = chart.dataSource?.length || 0
+      const chartWidth = chart.chartWidth || chartContainerWidth()
+      if (!totalBars || !chartWidth || !Number.isFinite(scale.barSpacing)) return
+
+      event.preventDefault()
+      event.stopImmediatePropagation()
+
+      const rect = tradingViewWheelTarget.getBoundingClientRect()
+      const pointerX = Math.max(0, Math.min(chartWidth, event.clientX - rect.left))
+      const oldSpacing = Math.max(MIN_BAR_SPACING, Number(scale.barSpacing) || 6)
+      const factor = event.deltaY < 0 ? WHEEL_ZOOM_STEP : 1 / WHEEL_ZOOM_STEP
+      const newSpacing = Math.max(MIN_BAR_SPACING, Math.min(MAX_BAR_SPACING, oldSpacing * factor))
+      if (Math.abs(newSpacing - oldSpacing) < 0.001) return
+
+      const offsetX = Number(scale.offsetX) || 0
+      const indexUnderPointer = (pointerX - offsetX) / oldSpacing + (Number(scale.firstIndex) || 0) - 0.5
+      const visibleCount = Math.max(20, Math.ceil(chartWidth / newSpacing))
+      const maxFirst = Math.max(0, totalBars - visibleCount)
+      const nextFirst = indexUnderPointer - (pointerX - offsetX) / newSpacing + 0.5
+
+      scale.barSpacing = newSpacing
+      scale.visibleCount = visibleCount
+      scale.firstIndex = Math.min(Math.max(0, nextFirst), maxFirst)
+      chart.scrollZoom?.updateState?.({ timeScale: scale, totalBars })
+      chart.recalcPriceRange?.()
+      chart.layers?.markAllDirty?.()
+      chart.scheduleRender?.()
+      refreshTradeMarkers()
+    }
+    tradingViewWheelTarget.addEventListener('wheel', tradingViewWheelHandler, {
+      passive: false,
+      capture: true
+    })
+  }
+
+  function uninstallTradingViewWheelZoom() {
+    if (tradingViewWheelTarget && tradingViewWheelHandler) {
+      tradingViewWheelTarget.removeEventListener('wheel', tradingViewWheelHandler, true)
+    }
+    tradingViewWheelTarget = null
+    tradingViewWheelHandler = null
   }
 
   // ---------- 回放控制 ----------
@@ -1664,6 +1725,7 @@ export function useChart() {
 
   function destroy() {
     stopAutoPlay()
+    uninstallTradingViewWheelZoom()
     if (chart) {
       chart.destroy()
       chart = null

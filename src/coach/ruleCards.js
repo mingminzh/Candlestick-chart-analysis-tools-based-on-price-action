@@ -118,27 +118,78 @@ function textHaystack(payload) {
     pnlText,
     trade.side,
     trade.exitReason,
+    trade.entryType,
+    trade.orderType,
     review.marketState,
     review.tradePlan,
+    review.alwaysIn,
+    review.signalQuality,
+    review.invalidation,
     review.note,
     payload?.currentBar?.close
   ].filter(Boolean).join(' ').toLowerCase()
 }
 
+function cardSearchText(card) {
+  return [
+    card.id,
+    card.name,
+    card.category,
+    card.summary,
+    card.trigger,
+    ...(card.scenarios || []),
+    ...(card.evidence || []),
+    ...(card.commonMistakes || []),
+    ...(card.reviewQuestions || []),
+    ...(card.mistakeTags || []),
+    card.mistakeTag
+  ].filter(Boolean).join(' ').toLowerCase()
+}
+
+const KEYWORD_GROUPS = [
+  ['交易区间', 'trading range', 'tr', '区间', '震荡', '横盘'],
+  ['突破', 'breakout', 'bo', '跟随', '假突破', '失败突破'],
+  ['趋势', 'trend', 'always in', 'ai', '通道', 'channel'],
+  ['反转', 'reversal', '大反转', '小反转', 'major reversal', 'minor reversal'],
+  ['楔形', 'wedge', '三推', '三次推动'],
+  ['双顶', 'double top', '双底', 'double bottom', '颈线'],
+  ['末端旗形', 'final flag', '末端', '旗形'],
+  ['高潮', 'climax', '抢购高潮', '抛售高潮', '衰竭'],
+  ['止损', 'stop', '保护性止损', '失效'],
+  ['止盈', 'target', '目标', 'measured move', 'mm', '测量'],
+  ['剥头皮', 'scalp', '波段', 'swing', '管理'],
+  ['第二入场', 'second entry', '二次信号', '高二', '低二'],
+  ['追单', 'chase', '区间中部', 'middle'],
+  ['概率', 'probability', '盈亏比', '风险', '仓位']
+]
+
 function cardScore(card, payload) {
   const direction = tradeDirection(payload)
   const haystack = textHaystack(payload)
+  const cardText = cardSearchText(card)
   let score = 0
   if (!card.appliesTo?.length || card.appliesTo.includes(direction)) score += 1
   for (const word of card.scenarios || []) {
     if (haystack.includes(String(word).toLowerCase())) score += 2
   }
+  for (const group of KEYWORD_GROUPS) {
+    const hasPayloadKeyword = group.some(word => haystack.includes(word.toLowerCase()))
+    const hasCardKeyword = group.some(word => cardText.includes(word.toLowerCase()))
+    if (hasPayloadKeyword && hasCardKeyword) score += 3
+  }
+  for (const field of [card.name, card.category, card.mistakeTag]) {
+    const value = String(field || '').toLowerCase()
+    if (value && haystack.includes(value)) score += 3
+  }
   if (Number(payload?.selectedTrade?.pnl || 0) > 0 && card.id === 'TR-RESULT-BIAS-001') score += 3
-  if (Number(payload?.selectedTrade?.pnl || 0) < 0 && card.category === '交易区间与追单') score += 1
+  if (Number(payload?.selectedTrade?.pnl || 0) < 0) {
+    if (card.category === '交易区间与追单') score += 1
+    if (cardText.includes('止损') || cardText.includes('管理') || cardText.includes('失败')) score += 1
+  }
   return score
 }
 
-export async function selectRuleCardsForReview(payload, limit = 4) {
+export async function selectRuleCardsForReview(payload, limit = 8) {
   const cards = [
     ...BUILTIN_RULE_CARDS,
     ...localRuleCards(),

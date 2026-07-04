@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "desktop": "npm run build && electron electron/main.cjs",
+    "knowledge:check": "node scripts/validate-knowledge.cjs",
     "package:mac": "npm run build && electron-builder --mac",
     "package:dir": "npm run build && electron-builder --dir"
   },

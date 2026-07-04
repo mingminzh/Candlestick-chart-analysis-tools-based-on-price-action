@@ -144,6 +144,21 @@ knowledge_private/rule-cards/
 
 该目录已被 Git 忽略，不会上传。规则卡使用 JSON 格式，示例见 [RULE_CARD_JSON_EXAMPLE.json](docs/RULE_CARD_JSON_EXAMPLE.json)。
 
+本地知识库校验：
+
+```bash
+npm run knowledge:check
+```
+
+该命令会检查：
+
+- 私有规则卡 JSON 是否合法
+- 规则 ID 是否重复
+- 必填字段是否完整
+- `knowledge_private/` 是否仍被 Git 忽略
+
+当前 AI 点评会从内置规则、浏览器本地规则和 `knowledge_private/rule-cards/` 中检索候选规则卡，并把最相关的规则传给模型。
+
 ## 上传 GitHub 与隐私说明
 
 上传前请确认不要提交任何真实 API Key、账户私密信息或本机个人路径。

@@ -32,7 +32,7 @@ function fmtTime(time) {
       :aria-label="`${marker.profitable ? '盈利' : '亏损'}交易 ${marker.id}`"
       @click.stop="emit('select', marker.id)"
     >
-      <span class="marker-icon">{{ marker.profitable ? '▲' : '▼' }}</span>
+      <span class="marker-icon">{{ marker.side === 'long' ? '▲' : '▼' }}</span>
       <span class="marker-tooltip">
         <strong>{{ marker.profitable ? '盈利订单' : '亏损订单' }}</strong>
         <span>方向: {{ marker.side === 'long' ? '多' : '空' }}</span>
@@ -77,7 +77,8 @@ function fmtTime(time) {
 }
 
 .trade-marker.selected {
-  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.35), 0 2px 8px rgba(0, 0, 0, 0.35);
+  animation: selected-marker-pulse 0.9s ease-in-out infinite;
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.4), 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 
 .marker-icon {
@@ -120,5 +121,20 @@ function fmtTime(time) {
 
 .marker-tooltip .neg {
   color: #ef5350;
+}
+
+@keyframes selected-marker-pulse {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.32), 0 2px 8px rgba(0, 0, 0, 0.35);
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1.22);
+    box-shadow: 0 0 0 8px rgba(88, 166, 255, 0.08), 0 2px 12px rgba(0, 0, 0, 0.45);
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.32), 0 2px 8px rgba(0, 0, 0, 0.35);
+  }
 }
 </style>

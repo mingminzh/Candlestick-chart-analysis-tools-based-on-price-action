@@ -51,6 +51,7 @@ export async function buildAiReviewRequest(payload) {
       '请使用中文，保留必要英文术语，例如 Always In、Trading Range、Bull Signal Bar、Second Entry、Measured Move、Climax。',
       '每个关键判断必须引用 Bar 编号、价格行为证据或 ruleCards 中的规则名。',
       '引用K线时只能使用 payload.contextBars[].displayLabel、selectedTrade.entryBarLabel 或 selectedTrade.exitBarLabel，例如 Bar37。',
+      '禁止引用 payload.contextBars 中不存在的Bar编号；如果找不到对应证据，必须写“证据不足”。',
       'payload.contextBars[].time 是机器时间戳，禁止写成 Bar1773262800 这类时间戳编号。',
       '禁止泛泛而谈，禁止只因为盈利就认定交易正确，也禁止只因为亏损就认定交易错误。',
       '使用概率化表达，例如“更像60/40的交易区间环境”，不要把不确定判断说成绝对结论。',

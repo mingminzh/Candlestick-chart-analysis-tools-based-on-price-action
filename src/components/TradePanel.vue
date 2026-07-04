@@ -36,6 +36,7 @@ const emit = defineEmits([
   'remove-sl',
   'select-trade',
   'review-trade',
+  'regenerate-review',
   'update-trade-note',
   'delete-trade',
   'reset-account'
@@ -155,6 +156,11 @@ function isTradeReviewing(tradeId) {
 
 function reviewStatusFor(tradeId) {
   return props.tradeReviewStatus[tradeId] || { reviewed: false, score: null, mistakeTags: [] }
+}
+
+function onHistoryReviewClick(tradeId) {
+  if (reviewStatusFor(tradeId).reviewed) emit('select-trade', tradeId)
+  else emit('review-trade', tradeId)
 }
 
 function placePending(type, side) {
@@ -555,9 +561,9 @@ function stopVoiceInput() {
               <button
                 class="mini primary"
                 :disabled="isTradeReviewing(t.id)"
-                @click.stop="emit('review-trade', t.id)"
+                @click.stop="onHistoryReviewClick(t.id)"
               >
-                {{ isTradeReviewing(t.id) ? '点评中…' : '点评' }}
+                {{ isTradeReviewing(t.id) ? '点评中…' : reviewStatusFor(t.id).reviewed ? '查看' : '点评' }}
               </button>
               <button class="mini danger" @click.stop="emit('delete-trade', t.id)">删除</button>
             </div>
@@ -568,9 +574,9 @@ function stopVoiceInput() {
               <button
                 class="mini primary"
                 :disabled="isTradeReviewing(t.id)"
-                @click.stop="emit('review-trade', t.id)"
+                @click.stop="onHistoryReviewClick(t.id)"
               >
-                {{ isTradeReviewing(t.id) ? '点评中…' : '点评' }}
+                {{ isTradeReviewing(t.id) ? '点评中…' : reviewStatusFor(t.id).reviewed ? '查看' : '点评' }}
               </button>
               <button class="mini danger" @click.stop="emit('delete-trade', t.id)">删除</button>
             </div>
@@ -621,6 +627,9 @@ function stopVoiceInput() {
           </div>
           <div class="review-actions">
             <span v-if="feedback.score !== undefined" class="score-pill">评分 {{ feedback.score }}</span>
+            <button class="mini" :disabled="isReviewing" @click="emit('regenerate-review', selectedTrade.id)">
+              {{ isReviewing ? '点评中…' : '重新点评' }}
+            </button>
             <button class="mini" @click="reviewCollapsed = !reviewCollapsed">
               {{ reviewCollapsed ? '展开' : '收起' }}
             </button>

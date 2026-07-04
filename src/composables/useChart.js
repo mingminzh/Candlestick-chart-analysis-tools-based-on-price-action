@@ -10,6 +10,7 @@ import { chinaEightSessionKey } from '../coach/barNumbers.js'
 const STORAGE_KEY = 'pa-training-replay-session:v1'
 const DEFAULT_CONTEXT_BARS = 200
 const FUTURE_PADDING_BARS = 80
+const TRADE_REVIEW_AFTER_BARS = 80
 const DEFAULT_INITIAL_BALANCE = 1000
 
 const replayEma20 = {
@@ -745,11 +746,13 @@ export function useChart() {
     saveSession()
   }
 
-  async function runCoachForCurrentBar() {
+  async function runCoachForCurrentBar(options = {}) {
     if (!currentBar.value) return
+    const force = Boolean(options.force)
     const selected = selectedTrade.value
     const key = selected?.id ? `trade:${selected.id}` : currentReviewKey.value
     if (reviewRequestStates[key]?.loading) return
+    if (!force && coachFeedbacks[key]) return coachFeedbacks[key]
     reviewRequestStates[key] = {
       loading: true,
       error: '',
@@ -1414,7 +1417,9 @@ export function useChart() {
     const trade = trades.find(t => t.id === tradeId)
     if (trade) {
       const openIndex = nearestBarIndexByTime(allBars.value, trade.openTime)
-      const targetIndex = openIndex
+      const targetIndex = openIndex >= 0
+        ? Math.min(allBars.value.length - 1, openIndex + TRADE_REVIEW_AFTER_BARS)
+        : -1
       if (targetIndex >= 0) {
         replayIndex.value = Math.min(allBars.value.length - 1, Math.max(0, targetIndex))
         renderReplayWindow({ preserveTimeScale: false })

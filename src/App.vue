@@ -153,9 +153,19 @@ async function onReviewTrade(tradeId) {
   }
 }
 
+async function onRegenerateReview(tradeId) {
+  selectTradeForReview(tradeId)
+  activeRightPanel.value = 'trade'
+  try {
+    await runCoachForCurrentBar({ force: true })
+  } catch (err) {
+    importError.value = err?.message || 'AI点评失败'
+  }
+}
+
 function onTradeMarkerSelect(tradeId) {
   activeRightPanel.value = 'trade'
-  onReviewTrade(tradeId)
+  selectTradeForReview(tradeId)
 }
 
 async function onTimeframeChange() {
@@ -316,6 +326,7 @@ async function onCsvSelected(e) {
             @close-position="closePosition"
             @select-trade="onSelectTrade"
             @review-trade="onReviewTrade"
+            @regenerate-review="onRegenerateReview"
             @update-trade-note="updateTradeNote"
             @delete-trade="deleteTrade"
             @close-all="closeAllPositions"

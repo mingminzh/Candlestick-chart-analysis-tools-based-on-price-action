@@ -299,6 +299,7 @@ export function useChart() {
   // ---------- 画线状态 ----------
   const activeDrawingTool = ref(null)
   const drawingsCount = ref(0)
+  const selectedDrawingActive = ref(false)
 
   // ---------- 交易状态 ----------
   const account = reactive({
@@ -570,12 +571,22 @@ export function useChart() {
     chart.on('drawingAdded', () => {
       drawingsCount.value = chart.getDrawings().length
       activeDrawingTool.value = null
+      selectedDrawingActive.value = false
+      setChartScrollZoom(true)
     })
     chart.on('drawingRemoved', () => {
       drawingsCount.value = chart.getDrawings().length
+      selectedDrawingActive.value = false
+      setChartScrollZoom(true)
     })
     chart.on('drawingSelected', () => {
       activeDrawingTool.value = null
+      selectedDrawingActive.value = true
+      setChartScrollZoom(false)
+    })
+    chart.on('drawingDeselected', () => {
+      selectedDrawingActive.value = false
+      if (!activeDrawingTool.value) setChartScrollZoom(true)
     })
 
     chartReady.value = true
@@ -590,6 +601,10 @@ export function useChart() {
       period: 20,
       color: '#f0b429'
     })
+  }
+
+  function setChartScrollZoom(enabled) {
+    if (chart?.scrollZoom) chart.scrollZoom.enabled = Boolean(enabled)
   }
 
   // ---------- 回放控制 ----------
@@ -870,9 +885,12 @@ export function useChart() {
     if (activeDrawingTool.value === toolName) {
       activeDrawingTool.value = null
       chart.setDrawingTool(null)
+      if (!selectedDrawingActive.value) setChartScrollZoom(true)
     } else {
       activeDrawingTool.value = toolName
+      selectedDrawingActive.value = false
       chart.setDrawingTool(toolName)
+      setChartScrollZoom(false)
     }
   }
 
@@ -882,10 +900,13 @@ export function useChart() {
     if (activeDrawingTool.value === toolKey) {
       activeDrawingTool.value = null
       chart.setDrawingTool(null)
+      if (!selectedDrawingActive.value) setChartScrollZoom(true)
       return
     }
     activeDrawingTool.value = toolKey
+    selectedDrawingActive.value = false
     chart.setDrawingTool('long-short')
+    setChartScrollZoom(false)
     sessionMessage.value = side === 'short'
       ? '空头仓位工具: 依次点击入场、目标下方、止损上方'
       : '多头仓位工具: 依次点击入场、目标上方、止损下方'
@@ -895,6 +916,8 @@ export function useChart() {
     if (!chart) return
     chart.clearDrawings()
     drawingsCount.value = 0
+    selectedDrawingActive.value = false
+    if (!activeDrawingTool.value) setChartScrollZoom(true)
   }
 
   function setMagnetMode(enabled) {
@@ -907,6 +930,8 @@ export function useChart() {
     if (!selected?.id) return false
     chart.removeDrawing(selected.id)
     drawingsCount.value = chart.getDrawings?.().length || 0
+    selectedDrawingActive.value = false
+    if (!activeDrawingTool.value) setChartScrollZoom(true)
     saveSession()
     return true
   }

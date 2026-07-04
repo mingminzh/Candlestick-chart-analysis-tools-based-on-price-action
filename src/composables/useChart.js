@@ -781,7 +781,7 @@ export function useChart() {
     sessionMessage.value = `已导入 ${bars.length} 根K线: ${file.name}`
   }
 
-  function applyDataset(dataset) {
+  function applyDataset(dataset, options = {}) {
     stopAutoPlay()
     allBars.value = dataset.bars
     symbol.value = dataset.symbol || 'IMPORTED'
@@ -789,22 +789,25 @@ export function useChart() {
     dataSource.value = dataset.source || 'custom'
     datasetName.value = dataset.name || '未命名数据'
     replayIndex.value = visibleStartIndex.value
-    resetTradingState()
+    if (options.resetTrading !== false) {
+      resetTradingState()
+    }
     if (chart) {
       renderReplayWindow({ preserveTimeScale: false })
     }
     saveSession()
   }
 
-  async function loadLatestBtcData(nextTimeframe = timeframe.value || '5m') {
+  async function loadLatestBtcData(nextTimeframe = timeframe.value || '5m', options = {}) {
     stopAutoPlay()
     isLoadingData.value = true
     dataError.value = ''
     sessionMessage.value = `正在加载 BTCUSDT ${nextTimeframe} 最新K线...`
     try {
       const dataset = await fetchLatestBtcBars({ timeframe: nextTimeframe, targetCount: 3000 })
-      applyDataset(dataset)
-      sessionMessage.value = `已加载 BTCUSDT ${nextTimeframe} 最新K线: ${dataset.bars.length} 根`
+      applyDataset(dataset, { resetTrading: options.resetTrading })
+      const keepArchive = options.resetTrading === false
+      sessionMessage.value = `已加载 BTCUSDT ${nextTimeframe} 最新K线: ${dataset.bars.length} 根${keepArchive ? '，已保留成交历史与点评档案' : ''}`
     } catch (err) {
       dataError.value = err?.message || 'BTC最新K线加载失败'
       sessionMessage.value = dataError.value
@@ -817,7 +820,7 @@ export function useChart() {
   async function setTimeframe(nextTimeframe) {
     if (!nextTimeframe || nextTimeframe === timeframe.value) return
     if (dataSource.value === 'binance' || symbol.value === 'BTCUSDT') {
-      await loadLatestBtcData(nextTimeframe)
+      await loadLatestBtcData(nextTimeframe, { resetTrading: false })
       return
     }
     applyDataset({

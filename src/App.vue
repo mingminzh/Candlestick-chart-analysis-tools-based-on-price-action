@@ -269,7 +269,7 @@ async function onTimeframeChange() {
 async function onLoadLatestBtc() {
   importError.value = ''
   try {
-    await loadLatestBtcData(selectedTimeframe.value)
+    await loadLatestBtcData(selectedTimeframe.value, { resetTrading: false })
   } catch (err) {
     importError.value = err?.message || 'BTC最新K线加载失败'
   }

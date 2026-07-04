@@ -16,6 +16,7 @@ release
 .env.*
 !.env.example
 knowledge_private/
+recovered-pa-session*.json
 
 # Editor directories and files
 .vscode/*

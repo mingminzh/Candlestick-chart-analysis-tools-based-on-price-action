@@ -8,6 +8,8 @@ import { requestAiCoachFeedback, requestAiFollowUp } from '../coach/aiCoach.js'
 import { chinaEightSessionKey } from '../coach/barNumbers.js'
 
 const STORAGE_KEY = 'pa-training-replay-session:v1'
+const STORAGE_BACKUP_KEY = 'pa-training-replay-session-backups:v1'
+const MAX_SESSION_BACKUPS = 10
 const DEFAULT_CONTEXT_BARS = 200
 const FUTURE_PADDING_BARS = 80
 const TRADE_REVIEW_AFTER_BARS = 80
@@ -83,10 +85,67 @@ function safeReadSession() {
 function safeWriteSession(payload) {
   if (!canUseStorage()) return
   try {
+    try {
+      backupPreviousSession(payload)
+    } catch (err) {
+      console.warn('备份训练会话失败:', err)
+    }
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
   } catch (err) {
     console.warn('保存训练会话失败:', err)
   }
+}
+
+function archiveWeight(session) {
+  return (
+    (Array.isArray(session?.trades) ? session.trades.length : 0) +
+    (session?.coachFeedbacks ? Object.keys(session.coachFeedbacks).length : 0) +
+    (session?.tradeFollowUps ? Object.keys(session.tradeFollowUps).length : 0) +
+    (session?.tradeNotes ? Object.keys(session.tradeNotes).length : 0)
+  )
+}
+
+function compactSessionForBackup(session) {
+  return {
+    ...session,
+    dataset: {
+      ...session.dataset,
+      bars: [],
+      barsCount: Array.isArray(session.dataset?.bars) ? session.dataset.bars.length : session.dataset?.barsCount || 0
+    },
+    backedUpAt: new Date().toISOString()
+  }
+}
+
+function backupPreviousSession(nextPayload) {
+  const previousRaw = window.localStorage.getItem(STORAGE_KEY)
+  if (!previousRaw) return
+  const previous = JSON.parse(previousRaw)
+  if (archiveWeight(previous) === 0) return
+  const previousSignature = JSON.stringify({
+    savedAt: previous.savedAt,
+    trades: previous.trades,
+    feedbackKeys: Object.keys(previous.coachFeedbacks || {})
+  })
+  const nextSignature = JSON.stringify({
+    savedAt: nextPayload.savedAt,
+    trades: nextPayload.trades,
+    feedbackKeys: Object.keys(nextPayload.coachFeedbacks || {})
+  })
+  if (previousSignature === nextSignature) return
+
+  const backupsRaw = window.localStorage.getItem(STORAGE_BACKUP_KEY)
+  const backups = backupsRaw ? JSON.parse(backupsRaw) : []
+  const compactPrevious = compactSessionForBackup(previous)
+  const filtered = Array.isArray(backups)
+    ? backups.filter(item => JSON.stringify({
+      savedAt: item.savedAt,
+      trades: item.trades,
+      feedbackKeys: Object.keys(item.coachFeedbacks || {})
+    }) !== previousSignature)
+    : []
+  filtered.unshift(compactPrevious)
+  window.localStorage.setItem(STORAGE_BACKUP_KEY, JSON.stringify(filtered.slice(0, MAX_SESSION_BACKUPS)))
 }
 
 function assignReactiveArray(target, items) {
@@ -779,6 +838,62 @@ export function useChart() {
       name: file.name || 'CSV导入'
     })
     sessionMessage.value = `已导入 ${bars.length} 根K线: ${file.name}`
+  }
+
+  async function importReviewJsonFile(file) {
+    const text = await file.text()
+    const imported = JSON.parse(text)
+    const session = imported.session || imported
+    if (!session || typeof session !== 'object') {
+      throw new Error('复盘JSON格式异常')
+    }
+
+    stopAutoPlay()
+    if (chart) {
+      for (const order of orders) chart.removeOrderLine?.(order.id)
+    }
+
+    const dataset = session.dataset || {}
+    if (Array.isArray(dataset.bars) && dataset.bars.length) {
+      allBars.value = dataset.bars
+      symbol.value = dataset.symbol || session.symbol || symbol.value
+      timeframe.value = dataset.timeframe || session.timeframe || inferTimeframe(dataset.bars)
+      dataSource.value = dataset.source || dataSource.value
+      datasetName.value = dataset.name || `导入复盘 ${timeframe.value}`
+      replayIndex.value = Number.isInteger(session.replayIndex)
+        ? Math.min(Math.max(0, session.replayIndex), allBars.value.length - 1)
+        : visibleStartIndex.value
+    }
+
+    if (session.account && typeof session.account === 'object') {
+      Object.assign(account, session.account)
+    }
+    if (session.barCountSettings && typeof session.barCountSettings === 'object') {
+      updateBarCountSettings(session.barCountSettings)
+    }
+
+    assignReactiveArray(orders, session.orders)
+    assignReactiveArray(positions, session.positions)
+    assignReactiveArray(trades, session.trades)
+    assignReactiveObject(tradeNotes, session.tradeNotes)
+    assignReactiveObject(questionedTradeIds, session.questionedTradeIds)
+    assignReactiveObject(tradeFollowUps, session.tradeFollowUps)
+    assignReactiveObject(barReviews, session.barReviews)
+    assignReactiveObject(coachFeedbacks, session.coachFeedbacks)
+    assignReactiveObject(mistakes, session.mistakes)
+    selectedTradeId.value = session.selectedTradeId || ''
+    currentTradeId.value = session.currentTradeId || selectedTradeId.value || ''
+    orderIdSeq = nextNumericId(orders, 'ord-')
+    positionIdSeq = nextNumericId(positions, 'pos-')
+
+    if (chart) {
+      renderReplayWindow({ preserveTimeScale: false })
+      restoreOrderLines()
+      refreshPositionOverlays()
+      refreshTradeMarkers()
+    }
+    sessionMessage.value = `已导入复盘档案: ${trades.length} 笔交易，${Object.keys(coachFeedbacks).length} 条点评`
+    saveSession()
   }
 
   function applyDataset(dataset, options = {}) {
@@ -1752,6 +1867,7 @@ export function useChart() {
     initChart,
     destroy,
     importCsvFile,
+    importReviewJsonFile,
     loadLatestBtcData,
     setTimeframe,
     resetToMockData,

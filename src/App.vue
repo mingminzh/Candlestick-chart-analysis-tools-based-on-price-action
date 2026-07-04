@@ -20,6 +20,7 @@ const {
   initChart,
   destroy,
   importCsvFile,
+  importReviewJsonFile,
   loadLatestBtcData,
   setTimeframe,
   resetToMockData,
@@ -91,6 +92,7 @@ const {
 } = useChart()
 
 const fileInput = ref(null)
+const reviewJsonInput = ref(null)
 const importError = ref('')
 const activeRightPanel = ref('trade')
 const selectedTimeframe = ref(timeframe.value)
@@ -279,6 +281,10 @@ function openCsvPicker() {
   fileInput.value?.click()
 }
 
+function openReviewJsonPicker() {
+  reviewJsonInput.value?.click()
+}
+
 async function onCsvSelected(e) {
   const file = e.target.files?.[0]
   if (!file) return
@@ -287,6 +293,20 @@ async function onCsvSelected(e) {
     await importCsvFile(file)
   } catch (err) {
     importError.value = err?.message || 'CSV导入失败'
+  } finally {
+    e.target.value = ''
+  }
+}
+
+async function onReviewJsonSelected(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  importError.value = ''
+  try {
+    await importReviewJsonFile(file)
+    activeRightPanel.value = 'report'
+  } catch (err) {
+    importError.value = err?.message || '复盘JSON导入失败'
   } finally {
     e.target.value = ''
   }
@@ -305,6 +325,7 @@ async function onCsvSelected(e) {
       </div>
       <div class="header-actions">
         <input ref="fileInput" class="file-input" type="file" accept=".csv,text/csv" @change="onCsvSelected" />
+        <input ref="reviewJsonInput" class="file-input" type="file" accept=".json,application/json" @change="onReviewJsonSelected" />
         <span v-if="importError" class="import-error">{{ importError }}</span>
         <span v-else class="session-msg">{{ sessionInfo.message }}</span>
         <select v-model="selectedTimeframe" :disabled="isLoadingData" @change="onTimeframeChange">
@@ -316,6 +337,7 @@ async function onCsvSelected(e) {
           {{ isLoadingData ? '加载中...' : '加载BTC最新' }}
         </button>
         <button @click="openCsvPicker">导入CSV</button>
+        <button @click="openReviewJsonPicker">导入复盘</button>
         <button @click="resetToMockData">模拟数据</button>
         <button @click="aiSettingsOpen = true">AI设置</button>
       </div>

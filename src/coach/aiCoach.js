@@ -321,3 +321,89 @@ async function requestOpenAiCompatible({ endpoint, apiKey, model, provider, body
   const content = data?.choices?.[0]?.message?.content || '{}'
   return normalizeFeedback(JSON.parse(content), body.payload)
 }
+
+export async function requestAiFollowUp({ question, trade, feedback, previousFollowUps = [], payload }) {
+  const provider = aiProvider()
+  const endpoint = aiEndpoint()
+  const apiKey = aiApiKey()
+  const model = aiModel(provider)
+  const body = {
+    systemPrompt: [
+      '你是一名专注 Al Brooks 价格行为交易的复盘教练。',
+      '用户正在围绕一笔已经完成的历史交易追问。请基于原始AI点评、订单信息、K线上下文和已有追问回答。',
+      '回答必须具体、短而有用；需要引用Bar时，只能引用 payload.contextBars 中存在的 displayLabel。',
+      '如果证据不足，明确写“证据不足”，不要编造Bar编号或行情。',
+      '输出必须是结构化 JSON，不要输出 Markdown，不要输出 JSON 以外的文字。'
+    ].join('\n'),
+    outputSchema: {
+      answer: '直接回答用户追问，中文，建议3-8句',
+      evidence: ['可选，引用Bar编号/规则名/订单事实'],
+      nextCheck: '可选，下一次同类场景要检查的一句话'
+    },
+    payload: {
+      question,
+      trade,
+      feedback,
+      previousFollowUps,
+      contextBars: payload?.contextBars || [],
+      selectedTrade: payload?.selectedTrade || null,
+      barLabelGuide: payload?.barLabelGuide || ''
+    }
+  }
+
+  if (provider === 'proxy') {
+    if (!endpoint) throw new Error('当前选择了“自定义代理”，但还没有填写 AI代理接口地址。')
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'followup', ...body })
+    })
+    if (!res.ok) {
+      const message = await readErrorMessage(res)
+      if (res.status === 401) throw new Error(authErrorMessage('AI 追问接口鉴权失败', message))
+      throw new Error(`AI 追问接口请求失败: ${res.status}${message ? ` ${message}` : ''}`)
+    }
+    return normalizeFollowUp(await res.json())
+  }
+
+  if (!apiKey || !model) {
+    return {
+      answer: 'AI 追问未配置。请先在顶部“AI设置”里选择服务商并填写 API Key。',
+      evidence: [],
+      nextCheck: ''
+    }
+  }
+
+  const res = await fetch(defaultChatEndpoint(provider), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: body.systemPrompt },
+        { role: 'user', content: JSON.stringify({ outputSchema: body.outputSchema, payload: body.payload }) }
+      ]
+    })
+  })
+  if (!res.ok) {
+    const message = await readErrorMessage(res)
+    if (res.status === 401) throw new Error(authErrorMessage(`${provider === 'deepseek' ? 'DeepSeek' : 'OpenAI'} 追问鉴权失败`, message))
+    throw new Error(`${provider === 'deepseek' ? 'DeepSeek' : 'OpenAI'} 追问失败: ${res.status}${message ? ` ${message}` : ''}`)
+  }
+  const data = await res.json()
+  const content = data?.choices?.[0]?.message?.content || '{}'
+  return normalizeFollowUp(JSON.parse(content))
+}
+
+function normalizeFollowUp(data) {
+  const raw = data?.followUp || data
+  return {
+    answer: raw?.answer || raw?.summary || 'AI 已返回追问结果，但缺少 answer 字段。',
+    evidence: Array.isArray(raw?.evidence) ? raw.evidence : [],
+    nextCheck: raw?.nextCheck || ''
+  }
+}

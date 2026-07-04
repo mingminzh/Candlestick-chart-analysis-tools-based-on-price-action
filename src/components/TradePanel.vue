@@ -10,6 +10,7 @@ const props = defineProps({
   selectedTrade: { type: Object, default: null },
   selectedTradeId: { type: String, default: '' },
   tradeReviewStatus: { type: Object, default: () => ({}) },
+  tradeFollowUps: { type: Object, default: () => ({}) },
   feedback: { type: Object, default: null },
   reviewState: { type: Object, default: () => ({ loading: false, error: '' }) },
   realized: { type: Number, required: true },
@@ -37,6 +38,8 @@ const emit = defineEmits([
   'select-trade',
   'review-trade',
   'regenerate-review',
+  'mark-questioned',
+  'ask-follow-up',
   'update-trade-note',
   'delete-trade',
   'reset-account'
@@ -64,6 +67,7 @@ const resultFilter = ref('all')
 const reviewFilter = ref('all')
 const showAllTrades = ref(false)
 const isListening = ref(false)
+const followUpText = ref('')
 let recognition = null
 const accountDraft = ref({
   initialBalance: props.account.initialBalance,
@@ -161,6 +165,13 @@ function reviewStatusFor(tradeId) {
 function onHistoryReviewClick(tradeId) {
   if (reviewStatusFor(tradeId).reviewed) emit('select-trade', tradeId)
   else emit('review-trade', tradeId)
+}
+
+function submitFollowUp() {
+  const text = followUpText.value.trim()
+  if (!props.selectedTrade?.id || !text) return
+  emit('ask-follow-up', props.selectedTrade.id, text)
+  followUpText.value = ''
 }
 
 function placePending(type, side) {
@@ -300,6 +311,38 @@ function startVoiceInput() {
 function stopVoiceInput() {
   recognition?.stop?.()
   isListening.value = false
+}
+
+function startFollowUpVoice() {
+  if (!props.selectedTrade?.id || !speechSupported.value) return
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+  recognition?.stop?.()
+  recognition = new SpeechRecognition()
+  recognition.lang = 'zh-CN'
+  recognition.interimResults = true
+  recognition.continuous = false
+  const baseText = followUpText.value
+  recognition.onstart = () => {
+    isListening.value = true
+  }
+  recognition.onresult = (event) => {
+    let finalText = ''
+    let interimText = ''
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const text = event.results[i][0]?.transcript || ''
+      if (event.results[i].isFinal) finalText += text
+      else interimText += text
+    }
+    const prefix = baseText ? `${baseText}\n` : ''
+    followUpText.value = `${prefix}${finalText || interimText}`.trim()
+  }
+  recognition.onend = () => {
+    isListening.value = false
+  }
+  recognition.onerror = () => {
+    isListening.value = false
+  }
+  recognition.start()
 }
 </script>
 
@@ -475,124 +518,50 @@ function stopVoiceInput() {
       </div>
     </div>
 
-    <!-- 成交历史 -->
+    <!-- 当前完成交易 -->
     <div class="section">
-      <div class="title history-title">
-        <span>成交历史 ({{ trades.length }})</span>
-        <div class="history-actions">
-          <button v-if="trades.length > 12" class="mini" @click="showAllTrades = !showAllTrades">
-            {{ showAllTrades ? '最近12笔' : '全部' }}
-          </button>
-          <button class="mini" @click="tradeHistoryCollapsed = !tradeHistoryCollapsed">
-            {{ tradeHistoryCollapsed ? '展开' : '折叠' }}
-          </button>
+      <div class="title">当前完成交易</div>
+      <div v-if="!selectedTrade" class="empty">平仓后这里会显示本次交易摘要</div>
+      <div v-else class="item trade-item selected">
+        <div class="line1">
+          <span class="side" :class="selectedTrade.side">{{ selectedTrade.side === 'long' ? '多' : '空' }}</span>
+          <span class="qty">{{ selectedTrade.quantity }}</span>
+          <span class="px">{{ fmt(selectedTrade.entryPrice) }} → {{ fmt(selectedTrade.closePrice) }}</span>
+          <span class="pnl" :class="pnlClass(selectedTrade.pnl)">${{ fmt(selectedTrade.pnl) }}</span>
         </div>
-      </div>
-      <div v-if="!trades.length" class="empty">无成交记录</div>
-      <div v-else class="history-tools">
-        <input
-          v-model="tradeSearch"
-          type="search"
-          placeholder="搜索方向、价格、盈亏、备注或时间"
-        />
-        <span>{{ filteredTrades.length }} 笔匹配</span>
-      </div>
-      <div v-if="trades.length" class="history-summary">
-        <span>待点评 {{ tradeQueueStats.unreviewed }}</span>
-        <span>已点评 {{ tradeQueueStats.reviewed }}</span>
-        <span>亏损 {{ tradeQueueStats.losses }}</span>
-      </div>
-      <div v-if="trades.length" class="history-filters">
-        <select v-model="directionFilter">
-          <option value="all">全部方向</option>
-          <option value="long">只看多单</option>
-          <option value="short">只看空单</option>
-        </select>
-        <select v-model="resultFilter">
-          <option value="all">全部结果</option>
-          <option value="win">只看盈利</option>
-          <option value="loss">只看亏损</option>
-        </select>
-        <select v-model="reviewFilter">
-          <option value="all">全部点评</option>
-          <option value="unreviewed">未点评</option>
-          <option value="reviewed">已点评</option>
-        </select>
-      </div>
-      <div v-if="trades.length && tradeHistoryCollapsed" class="history-collapsed">
-        已折叠，当前选中：
-        <strong v-if="selectedTrade">{{ selectedTrade.side === 'long' ? '多' : '空' }} {{ fmt(selectedTrade.entryPrice) }} → {{ fmt(selectedTrade.closePrice) }}</strong>
-        <span v-else>无</span>
-      </div>
-      <div v-else-if="trades.length && !filteredTrades.length" class="empty">没有匹配的成交记录</div>
-      <div v-else-if="trades.length" class="list">
-        <div
-          v-for="t in visibleTrades"
-          :key="t.id"
-          :class="['item', 'trade-item', { selected: selectedTradeId === t.id }]"
-          @click="emit('select-trade', t.id)"
-        >
-          <div class="line1">
-            <span class="side" :class="t.side">{{ t.side === 'long' ? '多' : '空' }}</span>
-            <span class="qty">{{ t.quantity }}</span>
-            <span class="px">{{ fmt(t.entryPrice) }} → {{ fmt(t.closePrice) }}</span>
-            <span class="pnl" :class="pnlClass(t.pnl)">${{ fmt(t.pnl) }}</span>
-          </div>
-          <div class="trade-review-row">
-            <span :class="['review-badge', reviewStatusFor(t.id).reviewed ? 'done' : 'todo']">
-              {{ reviewStatusFor(t.id).reviewed ? '已点评' : '未点评' }}
-            </span>
-            <span v-if="reviewStatusFor(t.id).score !== null" class="review-score">
-              评分 {{ fmt(reviewStatusFor(t.id).score, 0) }}
-            </span>
-            <span
-              v-for="tag in reviewStatusFor(t.id).mistakeTags?.slice(0, 2)"
-              :key="t.id + tag"
-              class="review-tag"
+        <div class="trade-review-row">
+          <span v-if="reviewStatusFor(selectedTrade.id).questioned" class="review-badge todo">疑问</span>
+          <span :class="['review-badge', reviewStatusFor(selectedTrade.id).reviewed ? 'done' : 'todo']">
+            {{ reviewStatusFor(selectedTrade.id).reviewed ? '已点评' : '未点评' }}
+          </span>
+          <span v-if="reviewStatusFor(selectedTrade.id).score !== null" class="review-score">
+            评分 {{ fmt(reviewStatusFor(selectedTrade.id).score, 0) }}
+          </span>
+        </div>
+        <div class="line2">
+          <span class="meta">{{ selectedTrade.exitReason || 'manual' }} 平仓</span>
+          <div class="trade-actions">
+            <button
+              v-if="!reviewStatusFor(selectedTrade.id).questioned"
+              class="mini"
+              @click.stop="emit('mark-questioned', selectedTrade.id)"
             >
-              {{ tag }}
-            </span>
-          </div>
-          <div v-if="t.exitReason" class="line2">
-            <span class="meta" :class="t.exitReason === '止盈' ? 'pos' : t.exitReason === '止损' ? 'neg' : ''">
-              {{ t.exitReason }} 平仓
-            </span>
-            <div class="trade-actions">
-              <button
-                class="mini primary"
-                :disabled="isTradeReviewing(t.id)"
-                @click.stop="onHistoryReviewClick(t.id)"
-              >
-                {{ isTradeReviewing(t.id) ? '点评中…' : reviewStatusFor(t.id).reviewed ? '查看' : '点评' }}
-              </button>
-              <button class="mini danger" @click.stop="emit('delete-trade', t.id)">删除</button>
-            </div>
-          </div>
-          <div v-else class="line2">
-            <span class="meta">手动平仓</span>
-            <div class="trade-actions">
-              <button
-                class="mini primary"
-                :disabled="isTradeReviewing(t.id)"
-                @click.stop="onHistoryReviewClick(t.id)"
-              >
-                {{ isTradeReviewing(t.id) ? '点评中…' : reviewStatusFor(t.id).reviewed ? '查看' : '点评' }}
-              </button>
-              <button class="mini danger" @click.stop="emit('delete-trade', t.id)">删除</button>
-            </div>
+              标记疑问
+            </button>
+            <button
+              v-else
+              class="mini primary"
+              :disabled="isTradeReviewing(selectedTrade.id)"
+              @click.stop="emit('review-trade', selectedTrade.id)"
+            >
+              {{ isTradeReviewing(selectedTrade.id) ? '点评中…' : reviewStatusFor(selectedTrade.id).reviewed ? '查看点评' : 'AI点评这笔单' }}
+            </button>
           </div>
         </div>
-        <button
-          v-if="!showAllTrades && filteredTrades.length > visibleTrades.length"
-          class="load-more"
-          @click="showAllTrades = true"
-        >
-          显示全部 {{ filteredTrades.length }} 笔
-        </button>
       </div>
 
       <div
-        v-if="selectedTrade && feedback && feedback.payloadPreview?.selectedTradeId === selectedTrade.id"
+        v-if="selectedTrade && reviewStatusFor(selectedTrade.id).questioned && feedback && feedback.payloadPreview?.selectedTradeId === selectedTrade.id"
         class="trade-review"
       >
         <div class="voice-note">
@@ -707,9 +676,23 @@ function stopVoiceInput() {
               <li v-for="item in feedback.suggestions" :key="item">{{ item }}</li>
             </ul>
           </div>
+          <div class="followup-box">
+            <div class="review-title">追问</div>
+            <div v-if="tradeFollowUps[selectedTrade.id]?.length" class="followup-list">
+              <div v-for="item in tradeFollowUps[selectedTrade.id]" :key="item.id" class="followup-item">
+                <p><strong>问：</strong>{{ item.question }}</p>
+                <p><strong>答：</strong>{{ item.answer }}</p>
+              </div>
+            </div>
+            <textarea v-model="followUpText" placeholder="继续追问这笔单，例如：这是不是区间中部追单？"></textarea>
+            <div class="followup-actions">
+              <button class="mini" :disabled="!speechSupported" @click="startFollowUpVoice">语音追问</button>
+              <button class="mini primary" @click="submitFollowUp">发送追问</button>
+            </div>
+          </div>
         </template>
       </div>
-      <div v-else-if="selectedTrade" class="review-empty">
+      <div v-else-if="selectedTrade && reviewStatusFor(selectedTrade.id).questioned" class="review-empty">
         <div class="voice-note">
           <div class="voice-head">
             <span>交易备注</span>
@@ -1324,6 +1307,59 @@ button.ghost {
 .review-card ul {
   margin: 6px 0 0;
   padding-left: 16px;
+}
+
+.followup-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #161b22;
+  border-left: 3px solid #26a69a;
+}
+
+.followup-box textarea {
+  min-height: 70px;
+  width: 100%;
+  resize: vertical;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid #30363d;
+  background: #0d1117;
+  color: #e6edf3;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.followup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.followup-item {
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid #30363d;
+  background: #0d1117;
+  color: #c9d1d9;
+}
+
+.followup-item p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.followup-item p + p {
+  margin-top: 5px;
+}
+
+.followup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .line1 {

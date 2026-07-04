@@ -4,7 +4,7 @@ import { generateMockBars } from '../data/mockData.js'
 import { parseCsvBars } from '../data/csvBars.js'
 import { BTC_TIMEFRAMES, fetchLatestBtcBars } from '../data/binanceData.js'
 import { buildCoachPayload } from '../coach/localCoach.js'
-import { requestAiCoachFeedback } from '../coach/aiCoach.js'
+import { requestAiCoachFeedback, requestAiFollowUp } from '../coach/aiCoach.js'
 import { chinaEightSessionKey } from '../coach/barNumbers.js'
 
 const STORAGE_KEY = 'pa-training-replay-session:v1'
@@ -317,6 +317,8 @@ export function useChart() {
   const reviewRequestStates = reactive({})
   const mistakes = reactive({})
   const tradeNotes = reactive({})
+  const questionedTradeIds = reactive({})
+  const tradeFollowUps = reactive({})
   assignReactiveArray(orders, savedSession?.orders)
   assignReactiveArray(positions, savedSession?.positions)
   assignReactiveArray(trades, savedSession?.trades)
@@ -324,6 +326,8 @@ export function useChart() {
   assignReactiveObject(coachFeedbacks, savedSession?.coachFeedbacks)
   assignReactiveObject(mistakes, savedSession?.mistakes)
   assignReactiveObject(tradeNotes, savedSession?.tradeNotes)
+  assignReactiveObject(questionedTradeIds, savedSession?.questionedTradeIds)
+  assignReactiveObject(tradeFollowUps, savedSession?.tradeFollowUps)
 
   const realizedPnL = computed(() => trades.reduce((s, t) => s + t.pnl, 0))
 
@@ -359,12 +363,25 @@ export function useChart() {
     const key = currentReviewKey.value
     return key && mistakes[key] ? mistakes[key] : null
   })
+  const currentTradeId = ref(savedSession?.currentTradeId || '')
   const selectedTrade = computed(() => trades.find(t => t.id === selectedTradeId.value) || null)
+  const currentTrade = computed(() => trades.find(t => t.id === currentTradeId.value) || null)
+  const currentTradeFeedback = computed(() => {
+    const key = currentTradeId.value ? `trade:${currentTradeId.value}` : ''
+    return key && coachFeedbacks[key] ? coachFeedbacks[key] : null
+  })
+  const currentTradeReviewState = computed(() => {
+    const key = currentTradeId.value ? `trade:${currentTradeId.value}` : ''
+    return key && reviewRequestStates[key]
+      ? reviewRequestStates[key]
+      : { loading: false, error: '', startedAt: '', finishedAt: '' }
+  })
   const tradeReviewStatus = computed(() => Object.fromEntries(
     trades.map(trade => {
       const feedback = coachFeedbacks[`trade:${trade.id}`]
       return [trade.id, {
         reviewed: Boolean(feedback),
+        questioned: Boolean(questionedTradeIds[trade.id] || trade.isQuestioned),
         score: feedback?.scores?.total ?? feedback?.score ?? null,
         mistakeTags: feedback?.mistakeTags || [],
         createdAt: feedback?.createdAt || ''
@@ -979,8 +996,13 @@ export function useChart() {
     saveSession()
   }
 
+  function clearCurrentTradeWorkspace() {
+    currentTradeId.value = ''
+  }
+
   function openMarketPosition(side, qty = defaultQty()) {
     if (!currentBar.value) return
+    clearCurrentTradeWorkspace()
     const entryPrice = currentBar.value.close
     const id = `pos-${positionIdSeq++}`
     const pos = {
@@ -996,6 +1018,7 @@ export function useChart() {
   }
 
   function placeLimitOrder(side, price, qty = defaultQty()) {
+    clearCurrentTradeWorkspace()
     const id = `ord-${orderIdSeq++}`
     const order = {
       id,
@@ -1012,6 +1035,7 @@ export function useChart() {
   }
 
   function placeBreakoutOrder(side, price, qty = defaultQty()) {
+    clearCurrentTradeWorkspace()
     const id = `ord-${orderIdSeq++}`
     const order = {
       id,
@@ -1028,6 +1052,7 @@ export function useChart() {
   }
 
   function placeStopOrder(side, price, qty = defaultQty()) {
+    clearCurrentTradeWorkspace()
     const id = `ord-${orderIdSeq++}`
     const order = {
       id,
@@ -1195,6 +1220,7 @@ export function useChart() {
       exitReason: p.exitReason || 'manual'
     }
     trades.push(trade)
+    currentTradeId.value = trade.id
     selectedTradeId.value = trade.id
     // 移除该持仓的 TP/SL 委托线
     if (p.tpOrderId) {
@@ -1322,9 +1348,13 @@ export function useChart() {
     assignReactiveObject(barReviews, {})
     assignReactiveObject(coachFeedbacks, {})
     assignReactiveObject(mistakes, {})
+    assignReactiveObject(tradeNotes, {})
+    assignReactiveObject(questionedTradeIds, {})
+    assignReactiveObject(tradeFollowUps, {})
     orderIdSeq = 1
     positionIdSeq = 1
     chart?.setPositionOverlays?.([])
+    currentTradeId.value = ''
     selectedTradeId.value = ''
   }
 
@@ -1338,8 +1368,13 @@ export function useChart() {
     assignReactiveArray(orders, [])
     assignReactiveArray(positions, [])
     assignReactiveArray(trades, [])
+    assignReactiveObject(tradeNotes, {})
+    assignReactiveObject(coachFeedbacks, {})
+    assignReactiveObject(questionedTradeIds, {})
+    assignReactiveObject(tradeFollowUps, {})
     orderIdSeq = 1
     positionIdSeq = 1
+    currentTradeId.value = ''
     selectedTradeId.value = ''
     chart?.setPositionOverlays?.([])
     saveSession()
@@ -1352,7 +1387,11 @@ export function useChart() {
     account.balance -= Number(trade.pnl || 0)
     trades.splice(idx, 1)
     if (selectedTradeId.value === tradeId) selectedTradeId.value = ''
+    if (currentTradeId.value === tradeId) currentTradeId.value = ''
     delete tradeNotes[tradeId]
+    delete questionedTradeIds[tradeId]
+    delete tradeFollowUps[tradeId]
+    delete coachFeedbacks[`trade:${tradeId}`]
     refreshTradeMarkers()
     saveSession()
   }
@@ -1434,6 +1473,73 @@ export function useChart() {
     saveSession()
   }
 
+  function markTradeQuestioned(tradeId) {
+    const trade = trades.find(t => t.id === tradeId)
+    if (!trade) return
+    trade.isQuestioned = true
+    questionedTradeIds[tradeId] = true
+    selectedTradeId.value = tradeId
+    currentTradeId.value = tradeId
+    saveSession()
+  }
+
+  async function askTradeFollowUp(tradeId, question) {
+    const trade = trades.find(t => t.id === tradeId)
+    const text = String(question || '').trim()
+    if (!trade || !text) return null
+    const key = `followup:${tradeId}`
+    if (reviewRequestStates[key]?.loading) return null
+    reviewRequestStates[key] = {
+      loading: true,
+      error: '',
+      startedAt: new Date().toISOString(),
+      finishedAt: ''
+    }
+    const previousSelectedTradeId = selectedTradeId.value
+    selectedTradeId.value = tradeId
+    const payload = buildCoachPayload({
+      bars: allBars.value,
+      replayIndex: replayIndex.value,
+      review: { ...currentReview.value, note: tradeNotes[tradeId] || '' },
+      trades,
+      positions,
+      selectedTrade: { ...trade, note: tradeNotes[tradeId] || '' }
+    })
+    selectedTradeId.value = previousSelectedTradeId
+    try {
+      const answer = await requestAiFollowUp({
+        question: text,
+        trade,
+        feedback: coachFeedbacks[`trade:${tradeId}`] || null,
+        previousFollowUps: tradeFollowUps[tradeId] || [],
+        payload
+      })
+      if (!Array.isArray(tradeFollowUps[tradeId])) tradeFollowUps[tradeId] = []
+      tradeFollowUps[tradeId].push({
+        id: `fu-${Date.now()}`,
+        question: text,
+        answer: answer.answer,
+        createdAt: new Date().toISOString()
+      })
+      reviewRequestStates[key] = {
+        ...reviewRequestStates[key],
+        loading: false,
+        error: '',
+        finishedAt: new Date().toISOString()
+      }
+      saveSession()
+      return answer
+    } catch (err) {
+      reviewRequestStates[key] = {
+        ...reviewRequestStates[key],
+        loading: false,
+        error: err?.message || 'AI追问失败',
+        finishedAt: new Date().toISOString()
+      }
+      throw err
+    }
+  }
+
   function exportReviewData() {
     const data = {
       exportedAt: new Date().toISOString(),
@@ -1446,6 +1552,11 @@ export function useChart() {
       },
       report: sessionReport.value,
       trades: trades.map(trade => ({ ...trade })),
+      tradeNotes: { ...tradeNotes },
+      questionedTradeIds: { ...questionedTradeIds },
+      tradeFollowUps: Object.fromEntries(
+        Object.entries(tradeFollowUps).map(([key, value]) => [key, Array.isArray(value) ? value.map(item => ({ ...item })) : []])
+      ),
       coachFeedbacks: Object.fromEntries(
         Object.entries(coachFeedbacks).map(([key, value]) => [key, { ...value }])
       )
@@ -1480,6 +1591,10 @@ export function useChart() {
       positions: positions.map(p => ({ ...p })),
       trades: trades.map(t => ({ ...t })),
       tradeNotes: { ...tradeNotes },
+      questionedTradeIds: { ...questionedTradeIds },
+      tradeFollowUps: Object.fromEntries(
+        Object.entries(tradeFollowUps).map(([key, value]) => [key, Array.isArray(value) ? value.map(item => ({ ...item })) : []])
+      ),
       barReviews: Object.fromEntries(
         Object.entries(barReviews).map(([key, value]) => [key, { ...value }])
       ),
@@ -1489,7 +1604,8 @@ export function useChart() {
       mistakes: Object.fromEntries(
         Object.entries(mistakes).map(([key, value]) => [key, { ...value }])
       ),
-      selectedTradeId: selectedTradeId.value
+      selectedTradeId: selectedTradeId.value,
+      currentTradeId: currentTradeId.value
     })
   }
 
@@ -1559,7 +1675,13 @@ export function useChart() {
     positions,
     trades,
     tradeNotes,
+    questionedTradeIds,
+    tradeFollowUps,
     tradeMarkers,
+    currentTrade,
+    currentTradeId,
+    currentTradeFeedback,
+    currentTradeReviewState,
     selectedTrade,
     selectedTradeId,
     tradeReviewStatus,
@@ -1590,6 +1712,8 @@ export function useChart() {
     deleteTrade,
     selectTradeForReview,
     updateTradeNote,
+    markTradeQuestioned,
+    askTradeFollowUp,
     exportReviewData,
     updateCurrentReview,
     clearCurrentReview,

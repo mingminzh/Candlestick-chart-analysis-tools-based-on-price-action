@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount, nextTick, computed } from 'vue'
 import { useChart } from './composables/useChart.js'
 import ReplayBar from './components/ReplayBar.vue'
 import DrawingToolbar from './components/DrawingToolbar.vue'
@@ -51,7 +51,12 @@ const {
   positions,
   trades,
   tradeNotes,
+  questionedTradeIds,
+  tradeFollowUps,
   tradeMarkers,
+  currentTrade,
+  currentTradeFeedback,
+  currentTradeReviewState,
   selectedTrade,
   selectedTradeId,
   tradeReviewStatus,
@@ -79,6 +84,8 @@ const {
   deleteTrade,
   selectTradeForReview,
   updateTradeNote,
+  markTradeQuestioned,
+  askTradeFollowUp,
   exportReviewData,
   runCoachForCurrentBar
 } = useChart()
@@ -88,9 +95,19 @@ const importError = ref('')
 const activeRightPanel = ref('trade')
 const selectedTimeframe = ref(timeframe.value)
 const aiSettingsOpen = ref(false)
+const panelWidths = ref(readPanelWidths())
+const isResizingPanel = ref(false)
+const rightPanelWidth = computed(() => panelWidths.value[activeRightPanel.value] || 360)
+const mainStyle = computed(() => ({ '--right-panel-width': `${rightPanelWidth.value}px` }))
 
 watch(timeframe, (value) => {
   selectedTimeframe.value = value
+})
+
+watch(activeRightPanel, (value) => {
+  if (value === 'report' && !selectedTrade.value && trades.length) {
+    selectTradeForReview(trades[trades.length - 1].id)
+  }
 })
 
 onMounted(async () => {
@@ -103,8 +120,51 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
+  window.removeEventListener('mousemove', onPanelResizeMove)
+  window.removeEventListener('mouseup', stopPanelResize)
   destroy()
 })
+
+function readPanelWidths() {
+  if (typeof window === 'undefined') return { trade: 360, report: 640 }
+  try {
+    return {
+      trade: 360,
+      report: 640,
+      ...(JSON.parse(window.localStorage.getItem('pa-panel-widths') || '{}') || {})
+    }
+  } catch (err) {
+    return { trade: 360, report: 640 }
+  }
+}
+
+function savePanelWidths() {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem('pa-panel-widths', JSON.stringify(panelWidths.value))
+}
+
+function startPanelResize() {
+  isResizingPanel.value = true
+  window.addEventListener('mousemove', onPanelResizeMove)
+  window.addEventListener('mouseup', stopPanelResize)
+}
+
+function onPanelResizeMove(event) {
+  if (!isResizingPanel.value) return
+  const viewportWidth = window.innerWidth || 1280
+  const minWidth = activeRightPanel.value === 'report' ? 560 : 320
+  const maxWidth = Math.max(minWidth, viewportWidth - 520)
+  const nextWidth = Math.min(maxWidth, Math.max(minWidth, viewportWidth - event.clientX - 8))
+  panelWidths.value = { ...panelWidths.value, [activeRightPanel.value]: nextWidth }
+}
+
+function stopPanelResize() {
+  if (!isResizingPanel.value) return
+  isResizingPanel.value = false
+  savePanelWidths()
+  window.removeEventListener('mousemove', onPanelResizeMove)
+  window.removeEventListener('mouseup', stopPanelResize)
+}
 
 function onKey(e) {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
@@ -160,6 +220,14 @@ async function onRegenerateReview(tradeId) {
     await runCoachForCurrentBar({ force: true })
   } catch (err) {
     importError.value = err?.message || 'AI点评失败'
+  }
+}
+
+async function onAskFollowUp(tradeId, question) {
+  try {
+    await askTradeFollowUp(tradeId, question)
+  } catch (err) {
+    importError.value = err?.message || 'AI追问失败'
   }
 }
 
@@ -260,9 +328,10 @@ async function onCsvSelected(e) {
     <!-- 主体布局 -->
     <div
       class="main"
+      :style="mainStyle"
       :class="{
         'report-open': activeRightPanel === 'report',
-        'trade-review-open': activeRightPanel === 'trade' && selectedTrade
+        'trade-review-open': activeRightPanel === 'trade' && currentTrade
       }"
     >
       <!-- 左侧：画线工具 -->
@@ -287,6 +356,12 @@ async function onCsvSelected(e) {
         />
       </main>
 
+      <button
+        class="panel-resizer"
+        aria-label="调整图表和右侧面板宽度"
+        @mousedown.prevent="startPanelResize"
+      ></button>
+
       <!-- 右侧：交易面板 -->
       <aside class="sidebar right">
         <div class="right-panel">
@@ -306,11 +381,12 @@ async function onCsvSelected(e) {
             :positions="positions"
             :trades="trades"
             :trade-notes="tradeNotes"
-            :selected-trade="selectedTrade"
-            :selected-trade-id="selectedTradeId"
+            :selected-trade="currentTrade"
+            :selected-trade-id="currentTrade?.id || ''"
             :trade-review-status="tradeReviewStatus"
-            :feedback="currentCoachFeedback"
-            :review-state="currentReviewRequestState"
+            :trade-follow-ups="tradeFollowUps"
+            :feedback="currentTradeFeedback"
+            :review-state="currentTradeReviewState"
             :realized="realizedPnL"
             :unrealized="unrealizedPnL"
             :equity="equity"
@@ -327,6 +403,8 @@ async function onCsvSelected(e) {
             @select-trade="onSelectTrade"
             @review-trade="onReviewTrade"
             @regenerate-review="onRegenerateReview"
+            @mark-questioned="markTradeQuestioned"
+            @ask-follow-up="onAskFollowUp"
             @update-trade-note="updateTradeNote"
             @delete-trade="deleteTrade"
             @close-all="closeAllPositions"
@@ -341,6 +419,18 @@ async function onCsvSelected(e) {
           <ReportPanel
             v-else
             :report="sessionReport"
+            :trades="trades"
+            :trade-review-status="tradeReviewStatus"
+            :trade-follow-ups="tradeFollowUps"
+            :selected-trade="selectedTrade"
+            :selected-trade-id="selectedTradeId"
+            :feedback="currentCoachFeedback"
+            :review-state="currentReviewRequestState"
+            @select-trade="selectTradeForReview"
+            @review-trade="onReviewTrade"
+            @regenerate-review="onRegenerateReview"
+            @ask-follow-up="onAskFollowUp"
+            @delete-trade="deleteTrade"
             @export-reviews="exportReviewData"
           />
         </div>
@@ -460,7 +550,7 @@ async function onCsvSelected(e) {
 
 .main {
   display: grid;
-  grid-template-columns: 200px 1fr 320px;
+  grid-template-columns: 200px minmax(360px, 1fr) 6px minmax(320px, var(--right-panel-width));
   gap: 8px;
   flex: 1 1 0;
   min-height: 0;
@@ -468,11 +558,11 @@ async function onCsvSelected(e) {
 }
 
 .main.trade-review-open {
-  grid-template-columns: 200px minmax(520px, 1fr) minmax(520px, 40vw);
+  grid-template-columns: 200px minmax(360px, 1fr) 6px minmax(320px, var(--right-panel-width));
 }
 
 .main.report-open {
-  grid-template-columns: 200px minmax(480px, 1fr) minmax(520px, 42vw);
+  grid-template-columns: 200px minmax(320px, 1fr) 6px minmax(560px, var(--right-panel-width));
 }
 
 .sidebar {
@@ -495,6 +585,21 @@ async function onCsvSelected(e) {
   gap: 8px;
   height: 100%;
   min-height: 0;
+}
+
+.panel-resizer {
+  width: 6px;
+  min-width: 6px;
+  height: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: #21262d;
+  cursor: col-resize;
+}
+
+.panel-resizer:hover {
+  background: #58a6ff;
 }
 
 .panel-tabs {
@@ -538,11 +643,11 @@ async function onCsvSelected(e) {
 
 @media (max-width: 1280px) {
   .main.trade-review-open {
-    grid-template-columns: 170px minmax(380px, 1fr) minmax(460px, 44vw);
+    grid-template-columns: 170px minmax(320px, 1fr) 6px minmax(320px, var(--right-panel-width));
   }
 
   .main.report-open {
-    grid-template-columns: 170px minmax(380px, 1fr) minmax(460px, 44vw);
+    grid-template-columns: 170px minmax(280px, 1fr) 6px minmax(560px, var(--right-panel-width));
   }
 }
 

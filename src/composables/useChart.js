@@ -626,6 +626,7 @@ export function useChart() {
     chart.recalcPriceRange?.()
     chart.layers?.markAllDirty?.()
     chart.scheduleRender?.()
+    refreshTradeMarkers()
   }
 
   function renderReplayWindow(options = {}) {
@@ -646,6 +647,23 @@ export function useChart() {
     restoreOrderLines()
     refreshPositionOverlays()
     refreshTradeMarkers()
+  }
+
+  function focusTradeWindow(openIndex, targetIndex) {
+    if (!chart || !chart.timeScale) return
+    const chartWidth = chartContainerWidth()
+    const preferredVisible = Math.max(80, Math.min(140, TRADE_REVIEW_AFTER_BARS + 40))
+    const barSpacing = Math.max(4, Math.min(9, Math.floor(chartWidth / preferredVisible) || 6))
+    const visibleCount = Math.max(60, Math.floor(chartWidth / barSpacing) || preferredVisible)
+    const firstIndex = Math.max(0, Math.min(openIndex - 20, Math.max(0, targetIndex - visibleCount + 12)))
+    chart.timeScale.barSpacing = barSpacing
+    chart.timeScale.visibleCount = visibleCount
+    chart.timeScale.offsetX = 0
+    chart.timeScale.firstIndex = firstIndex
+    chart.scrollZoom?.updateState?.({ timeScale: chart.timeScale, totalBars: chart.dataSource?.length || 0 })
+    chart.recalcPriceRange?.()
+    chart.layers?.markAllDirty?.()
+    chart.scheduleRender?.()
   }
 
   function replayNext() {
@@ -1462,6 +1480,7 @@ export function useChart() {
       if (targetIndex >= 0) {
         replayIndex.value = Math.min(allBars.value.length - 1, Math.max(0, targetIndex))
         renderReplayWindow({ preserveTimeScale: false })
+        focusTradeWindow(openIndex, replayIndex.value)
       }
     }
     saveSession()

@@ -70,6 +70,7 @@ const scoreEntries = computed(() => {
     ['总分', scores.total ?? props.feedback?.score]
   ].filter(([, value]) => value !== undefined && value !== null && value !== '')
 })
+const topMistakeTags = computed(() => sortedEntries(props.report.mistakeTagStats).slice(0, 3))
 
 function pct(value) {
   if (!Number.isFinite(value)) return '-'
@@ -174,48 +175,21 @@ function startFollowUpVoice() {
       </div>
     </div>
 
-    <div class="section">
-      <div class="title">判断分布</div>
-      <div class="dist-group">
-        <div class="dist">
-          <span>交易计划</span>
-          <div v-for="[name, count] in sortedEntries(report.reviewStats.tradePlans)" :key="name" class="row">
-            <em>{{ name }}</em><b>{{ count }}</b>
-          </div>
-        </div>
-        <div class="dist">
-          <span>市场状态</span>
-          <div v-for="[name, count] in sortedEntries(report.reviewStats.marketStates)" :key="name" class="row">
-            <em>{{ name }}</em><b>{{ count }}</b>
-          </div>
-        </div>
+    <div class="compact-report">
+      <div class="compact-block">
+        <span>交易结果</span>
+        <b class="pos">盈 {{ report.tradeStats.wins }}</b>
+        <b class="neg">亏 {{ report.tradeStats.losses }}</b>
+        <b>保 {{ report.tradeStats.breakeven }}</b>
       </div>
-    </div>
-
-    <div class="section">
-      <div class="title">交易结果</div>
-      <div class="trade-summary">
-        <div><span>盈利</span><b class="pos">{{ report.tradeStats.wins }}</b></div>
-        <div><span>亏损</span><b class="neg">{{ report.tradeStats.losses }}</b></div>
-        <div><span>保本</span><b>{{ report.tradeStats.breakeven }}</b></div>
-        <div>
-          <span>盈亏因子</span>
-          <b>{{ report.tradeStats.profitFactor === Infinity ? '∞' : fmt(report.tradeStats.profitFactor) }}</b>
-        </div>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="title">AI错误标签</div>
-      <div v-if="!sortedEntries(report.mistakeTagStats).length" class="empty">暂无AI错误标签</div>
-      <div v-else class="tag-stats">
-        <div v-for="[name, stat] in sortedEntries(report.mistakeTagStats)" :key="name" class="tag-row">
-          <div>
-            <b>{{ name }}</b>
-            <span>{{ stat.count }} 次 · 盈 {{ stat.wins }} / 亏 {{ stat.losses }}</span>
-          </div>
-          <em :class="pnlTone(stat.totalPnl)">{{ money(stat.totalPnl) }}</em>
-        </div>
+      <div class="compact-block wide">
+        <span>AI错误标签</span>
+        <template v-if="topMistakeTags.length">
+          <b v-for="[name, stat] in topMistakeTags" :key="name" class="compact-tag">
+            {{ name }} · {{ stat.count }}
+          </b>
+        </template>
+        <b v-else>暂无</b>
       </div>
     </div>
 
@@ -512,6 +486,50 @@ function startFollowUpVoice() {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.compact-report {
+  display: grid;
+  grid-template-columns: minmax(180px, auto) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.compact-block {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: #0d1117;
+  border: 1px solid #21262d;
+}
+
+.compact-block span {
+  flex-shrink: 0;
+  color: #8b949e;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.compact-block b {
+  min-width: 0;
+  color: #c9d1d9;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.compact-tag {
+  max-width: 180px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(88, 166, 255, 0.1);
+  border: 1px solid rgba(88, 166, 255, 0.22);
+  color: #79c0ff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .empty {
@@ -838,53 +856,6 @@ function startFollowUpVoice() {
   100% {
     transform: translateX(260%);
   }
-}
-
-.tag-stats {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.tag-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px;
-  background: #0d1117;
-  border: 1px solid #21262d;
-  border-radius: 6px;
-}
-
-.tag-row div {
-  min-width: 0;
-}
-
-.tag-row b,
-.tag-row span {
-  display: block;
-}
-
-.tag-row b {
-  color: #e6edf3;
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tag-row span {
-  margin-top: 3px;
-  color: #8b949e;
-  font-size: 11px;
-}
-
-.tag-row em {
-  flex-shrink: 0;
-  color: #c9d1d9;
-  font-size: 12px;
-  font-style: normal;
-  font-variant-numeric: tabular-nums;
 }
 
 .trade-row {

@@ -5,6 +5,7 @@ import { parseCsvBars } from '../data/csvBars.js'
 import { BTC_TIMEFRAMES, fetchLatestBtcBars } from '../data/binanceData.js'
 import { buildCoachPayload } from '../coach/localCoach.js'
 import { requestAiCoachFeedback } from '../coach/aiCoach.js'
+import { chinaEightSessionKey } from '../coach/barNumbers.js'
 
 const STORAGE_KEY = 'pa-training-replay-session:v1'
 const DEFAULT_CONTEXT_BARS = 200
@@ -214,11 +215,6 @@ function nearestBarIndexByTime(bars, time) {
     }
   })
   return bestIndex
-}
-
-function chinaEightSessionKey(time) {
-  const d = new Date(time * 1000)
-  return `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`
 }
 
 /**
@@ -1417,12 +1413,11 @@ export function useChart() {
     selectedTradeId.value = tradeId || ''
     const trade = trades.find(t => t.id === tradeId)
     if (trade) {
-      const closeIndex = nearestBarIndexByTime(allBars.value, trade.closeTime || trade.openTime)
       const openIndex = nearestBarIndexByTime(allBars.value, trade.openTime)
-      const targetIndex = Math.max(closeIndex, openIndex + 20)
+      const targetIndex = openIndex
       if (targetIndex >= 0) {
-        replayIndex.value = Math.min(allBars.value.length - 1, Math.max(visibleStartIndex.value, targetIndex))
-        renderReplayWindow()
+        replayIndex.value = Math.min(allBars.value.length - 1, Math.max(0, targetIndex))
+        renderReplayWindow({ preserveTimeScale: false })
       }
     }
     saveSession()

@@ -1,3 +1,5 @@
+import { buildBarNumberMap, INTRADAY_BAR_NUMBER_RESET } from './barNumbers.js'
+
 function directionFromPlan(plan) {
   if (plan === '做多') return 'long'
   if (plan === '做空') return 'short'
@@ -69,24 +71,6 @@ function nearestIndexByTime(bars, time) {
   return best
 }
 
-function barSessionKey(time) {
-  const d = new Date(time * 1000)
-  return `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`
-}
-
-function buildBarNumberMap(bars) {
-  const numbers = new Map()
-  let count = 0
-  let previousDay = ''
-  bars.forEach((bar, index) => {
-    const day = barSessionKey(bar.time)
-    count = day !== previousDay ? 1 : count + 1
-    previousDay = day
-    numbers.set(index, count)
-  })
-  return numbers
-}
-
 function makeAiBar(bar, absoluteIndex, barNumbers) {
   const barNo = barNumbers.get(absoluteIndex) || absoluteIndex + 1
   return {
@@ -133,7 +117,7 @@ function makeSegments(bars) {
     const bull = part.filter(b => b.close > b.open).length
     const bear = part.length - bull
     const direction = last.close > first.open ? '上推' : last.close < first.open ? '下压' : '横盘'
-    const label = `Bar${start + 1}~Bar${start + part.length}`
+    const label = `${first.displayLabel || `Bar${start + 1}`}~${last.displayLabel || `Bar${start + part.length}`}`
     const climax = part.some(b => {
       const range = b.high - b.low
       return range > 0 && Math.abs(b.close - b.open) / range > 0.7
@@ -149,11 +133,10 @@ function makeSegments(bars) {
 export function buildCoachPayload({ bars, replayIndex, review, trades = [], positions = [], selectedTrade = null }) {
   const selectedOpenIndex = selectedTrade ? nearestIndexByTime(bars, selectedTrade.openTime) : -1
   const selectedCloseIndex = selectedTrade ? nearestIndexByTime(bars, selectedTrade.closeTime) : -1
-  const focusEndIndex = selectedTrade && selectedOpenIndex >= 0
-    ? Math.max(selectedOpenIndex, selectedCloseIndex >= 0 ? selectedCloseIndex : replayIndex)
-    : replayIndex
-  const start = Math.max(0, (selectedOpenIndex >= 0 ? selectedOpenIndex : focusEndIndex) - 80)
-  const end = Math.min(bars.length - 1, Math.max(0, focusEndIndex))
+  const hasSelectedEntry = selectedTrade && selectedOpenIndex >= 0
+  const focusIndex = hasSelectedEntry ? selectedOpenIndex : replayIndex
+  const start = Math.max(0, focusIndex - 80)
+  const end = Math.min(bars.length - 1, Math.max(0, hasSelectedEntry ? selectedOpenIndex + 80 : focusIndex))
   const barNumbers = buildBarNumberMap(bars)
   const contextBars = bars.slice(start, end + 1).map((bar, offset) => makeAiBar(bar, start + offset, barNumbers))
   const currentBar = bars[end] ? makeAiBar(bars[end], end, barNumbers) : null
@@ -173,7 +156,15 @@ export function buildCoachPayload({ bars, replayIndex, review, trades = [], posi
     openPositions: positions.map(p => ({ ...p })),
     recentTrades: recentTrades.map(t => ({ ...t })),
     selectedTrade: selectedTradeWithBars,
-    barLabelGuide: '引用K线时只能使用 displayLabel/entryBarLabel/exitBarLabel，例如 Bar37；time 是机器时间戳，禁止写成 Bar1773262800。'
+    contextWindow: {
+      mode: hasSelectedEntry ? 'entry-centered' : 'current-bar',
+      beforeBars: hasSelectedEntry ? Math.min(80, selectedOpenIndex) : Math.max(0, end - start),
+      afterBars: hasSelectedEntry ? Math.max(0, end - selectedOpenIndex) : 0,
+      entryAbsoluteIndex: hasSelectedEntry ? selectedOpenIndex : null,
+      exitAbsoluteIndex: selectedCloseIndex >= 0 ? selectedCloseIndex : null,
+      barNumberReset: INTRADAY_BAR_NUMBER_RESET
+    },
+    barLabelGuide: '引用K线时只能使用 displayLabel/entryBarLabel/exitBarLabel，例如 Bar37；time 是机器时间戳，禁止写成 Bar1773262800。日内Bar编号按北京时间早上8点开始重新计数。'
   }
 }
 

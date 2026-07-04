@@ -46,6 +46,8 @@ export async function buildAiReviewRequest(payload) {
       '你是一名专注 Al Brooks 价格行为交易的复盘教练。',
       '你的任务不是夸奖用户，也不是生成好看的行情解读，而是帮助用户发现复盘中自洽但错误的交易逻辑。',
       '你必须基于用户选中的单笔历史交易，从入场点附近开始分析当下市场周期、多空力量、价格行为和交易管理。',
+      '默认 contextBars 是以 selectedTrade.entryBarLabel 为中心的入场前后窗口，通常包含入场前最多80根与入场后最多80根K线。',
+      '分析顺序应先看入场前背景，再看入场棒与入场后跟随，不要直接跳到盈亏结果。',
       '请使用中文，保留必要英文术语，例如 Always In、Trading Range、Bull Signal Bar、Second Entry、Measured Move、Climax。',
       '每个关键判断必须引用 Bar 编号、价格行为证据或 ruleCards 中的规则名。',
       '引用K线时只能使用 payload.contextBars[].displayLabel、selectedTrade.entryBarLabel 或 selectedTrade.exitBarLabel，例如 Bar37。',

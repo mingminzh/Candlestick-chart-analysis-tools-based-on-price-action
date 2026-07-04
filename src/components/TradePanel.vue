@@ -55,6 +55,9 @@ const scoreEntries = computed(() => {
 })
 const pendingPrice = ref('')
 const reviewCollapsed = ref(false)
+const tradeHistoryCollapsed = ref(false)
+const tradeSearch = ref('')
+const showAllTrades = ref(false)
 const isListening = ref(false)
 let recognition = null
 const accountDraft = ref({
@@ -63,6 +66,28 @@ const accountDraft = ref({
   defaultQty: props.account.defaultQty || 0.05,
   defaultAmount: props.account.defaultAmount || 1000
 })
+
+const sortedTrades = computed(() => props.trades.slice().reverse())
+const filteredTrades = computed(() => {
+  const keyword = tradeSearch.value.trim().toLowerCase()
+  if (!keyword) return sortedTrades.value
+  return sortedTrades.value.filter((trade) => {
+    const sideText = trade.side === 'long' ? '多 long 做多' : '空 short 做空'
+    const noteText = props.tradeNotes[trade.id] || ''
+    return [
+      trade.id,
+      sideText,
+      trade.exitReason,
+      fmt(trade.entryPrice),
+      fmt(trade.closePrice),
+      fmt(trade.pnl),
+      fmtTime(trade.openTime),
+      fmtTime(trade.closeTime),
+      noteText
+    ].filter(Boolean).join(' ').toLowerCase().includes(keyword)
+  })
+})
+const visibleTrades = computed(() => showAllTrades.value ? filteredTrades.value : filteredTrades.value.slice(0, 12))
 
 watch(() => props.account, (account) => {
   accountDraft.value = {
@@ -75,6 +100,7 @@ watch(() => props.account, (account) => {
 
 watch(() => props.selectedTradeId, () => {
   reviewCollapsed.value = false
+  if (props.selectedTradeId) tradeHistoryCollapsed.value = false
 })
 
 function fmt(v, dp = 2) {
@@ -419,11 +445,35 @@ function stopVoiceInput() {
 
     <!-- 成交历史 -->
     <div class="section">
-      <div class="title">成交历史 ({{ trades.length }})</div>
+      <div class="title history-title">
+        <span>成交历史 ({{ trades.length }})</span>
+        <div class="history-actions">
+          <button v-if="trades.length > 12" class="mini" @click="showAllTrades = !showAllTrades">
+            {{ showAllTrades ? '最近12笔' : '全部' }}
+          </button>
+          <button class="mini" @click="tradeHistoryCollapsed = !tradeHistoryCollapsed">
+            {{ tradeHistoryCollapsed ? '展开' : '折叠' }}
+          </button>
+        </div>
+      </div>
       <div v-if="!trades.length" class="empty">无成交记录</div>
-      <div v-else class="list">
+      <div v-else class="history-tools">
+        <input
+          v-model="tradeSearch"
+          type="search"
+          placeholder="搜索方向、价格、盈亏、备注或时间"
+        />
+        <span>{{ filteredTrades.length }} 笔匹配</span>
+      </div>
+      <div v-if="trades.length && tradeHistoryCollapsed" class="history-collapsed">
+        已折叠，当前选中：
+        <strong v-if="selectedTrade">{{ selectedTrade.side === 'long' ? '多' : '空' }} {{ fmt(selectedTrade.entryPrice) }} → {{ fmt(selectedTrade.closePrice) }}</strong>
+        <span v-else>无</span>
+      </div>
+      <div v-else-if="trades.length && !filteredTrades.length" class="empty">没有匹配的成交记录</div>
+      <div v-else-if="trades.length" class="list">
         <div
-          v-for="t in trades.slice().reverse().slice(0, 12)"
+          v-for="t in visibleTrades"
           :key="t.id"
           :class="['item', 'trade-item', { selected: selectedTradeId === t.id }]"
           @click="emit('select-trade', t.id)"
@@ -463,6 +513,13 @@ function stopVoiceInput() {
             </div>
           </div>
         </div>
+        <button
+          v-if="!showAllTrades && filteredTrades.length > visibleTrades.length"
+          class="load-more"
+          @click="showAllTrades = true"
+        >
+          显示全部 {{ filteredTrades.length }} 笔
+        </button>
       </div>
 
       <div
@@ -652,6 +709,16 @@ function stopVoiceInput() {
   align-items: center;
 }
 
+.history-title {
+  gap: 8px;
+}
+
+.history-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .account .row {
   display: flex;
   justify-content: space-between;
@@ -778,6 +845,42 @@ button.ghost {
   gap: 6px;
 }
 
+.history-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.history-tools input {
+  min-width: 0;
+  height: 30px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid #30363d;
+  background: #0d1117;
+  color: #e6edf3;
+  font-size: 12px;
+}
+
+.history-tools span,
+.history-collapsed {
+  color: #8b949e;
+  font-size: 11px;
+}
+
+.history-collapsed {
+  padding: 9px;
+  border: 1px dashed #30363d;
+  border-radius: 6px;
+  background: #0d1117;
+  line-height: 1.5;
+}
+
+.history-collapsed strong {
+  color: #c9d1d9;
+}
+
 .item {
   padding: 8px;
   background: #0d1117;
@@ -804,7 +907,7 @@ button.ghost {
 .trade-review,
 .review-empty {
   margin-top: 8px;
-  padding: 10px;
+  padding: 14px;
   background: #0d1117;
   border: 1px solid #30363d;
   border-radius: 6px;
@@ -943,9 +1046,9 @@ button.ghost {
 .review-summary {
   margin-top: 8px;
   color: #c9d1d9;
-  font-size: 12px;
-  line-height: 1.6;
-  padding: 8px;
+  font-size: 13px;
+  line-height: 1.75;
+  padding: 10px 12px;
   background: #161b22;
   border-radius: 5px;
   border-left: 3px solid #f0b429;
@@ -966,7 +1069,7 @@ button.ghost {
 }
 
 .review-card {
-  padding: 8px;
+  padding: 10px 12px;
   background: #161b22;
   border-left: 3px solid #58a6ff;
   border-radius: 5px;
@@ -990,7 +1093,7 @@ button.ghost {
 
 .review-title {
   color: #58a6ff;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -1069,8 +1172,8 @@ button.ghost {
 .review-card p,
 .review-card li {
   color: #c9d1d9;
-  font-size: 12px;
-  line-height: 1.6;
+  font-size: 13px;
+  line-height: 1.75;
 }
 
 .review-card ul {
@@ -1163,6 +1266,13 @@ button.ghost {
 .mini:disabled {
   cursor: progress;
   opacity: 0.65;
+}
+
+.load-more {
+  width: 100%;
+  min-height: 30px;
+  background: #161b22;
+  color: #8b949e;
 }
 
 @keyframes review-progress {

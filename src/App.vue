@@ -247,7 +247,13 @@ async function onCsvSelected(e) {
     </div>
 
     <!-- 主体布局 -->
-    <div class="main" :class="{ 'report-open': activeRightPanel === 'report' }">
+    <div
+      class="main"
+      :class="{
+        'report-open': activeRightPanel === 'report',
+        'trade-review-open': activeRightPanel === 'trade' && selectedTrade
+      }"
+    >
       <!-- 左侧：画线工具 -->
       <aside class="sidebar left">
         <DrawingToolbar
@@ -448,6 +454,10 @@ async function onCsvSelected(e) {
   height: 100%;
 }
 
+.main.trade-review-open {
+  grid-template-columns: 200px minmax(520px, 1fr) minmax(520px, 40vw);
+}
+
 .main.report-open {
   grid-template-columns: 200px minmax(480px, 1fr) minmax(520px, 42vw);
 }
@@ -514,6 +524,10 @@ async function onCsvSelected(e) {
 }
 
 @media (max-width: 1280px) {
+  .main.trade-review-open {
+    grid-template-columns: 170px minmax(380px, 1fr) minmax(460px, 44vw);
+  }
+
   .main.report-open {
     grid-template-columns: 170px minmax(380px, 1fr) minmax(460px, 44vw);
   }

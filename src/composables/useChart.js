@@ -16,7 +16,9 @@ const TRADE_REVIEW_AFTER_BARS = 80
 const DEFAULT_INITIAL_BALANCE = 1000
 const MIN_BAR_SPACING = 2
 const MAX_BAR_SPACING = 48
-const WHEEL_ZOOM_STEP = 1.12
+const WHEEL_ZOOM_STEP = 1.04
+const MAX_WHEEL_STEPS = 3
+const TIMEFRAME_ANCHOR_VISIBLE_BARS = 150
 
 const replayEma20 = {
   name: 'Replay EMA20',
@@ -278,6 +280,21 @@ function nearestBarIndexByTime(bars, time) {
     }
   })
   return bestIndex
+}
+
+function findNearestBarIndexByTime(bars, time) {
+  return nearestBarIndexByTime(bars, time)
+}
+
+function normalizeWheelDelta(event) {
+  const raw = Math.abs(Number(event.deltaY) || 0)
+  if (!raw) return 0
+  const unit = event.deltaMode === 1 ? 3 : event.deltaMode === 2 ? 6 : 1
+  const pixelNormalized = event.deltaMode === 0
+    ? raw / 120
+    : raw * unit
+  const steps = Math.max(0.25, pixelNormalized || 1)
+  return Math.min(MAX_WHEEL_STEPS, steps)
 }
 
 /**
@@ -694,7 +711,11 @@ export function useChart() {
       const rect = tradingViewWheelTarget.getBoundingClientRect()
       const pointerX = Math.max(0, Math.min(chartWidth, event.clientX - rect.left))
       const oldSpacing = Math.max(MIN_BAR_SPACING, Number(scale.barSpacing) || 6)
-      const factor = event.deltaY < 0 ? WHEEL_ZOOM_STEP : 1 / WHEEL_ZOOM_STEP
+      const wheelSteps = normalizeWheelDelta(event)
+      if (!wheelSteps) return
+      const factor = event.deltaY < 0
+        ? Math.pow(WHEEL_ZOOM_STEP, wheelSteps)
+        : 1 / Math.pow(WHEEL_ZOOM_STEP, wheelSteps)
       const newSpacing = Math.max(MIN_BAR_SPACING, Math.min(MAX_BAR_SPACING, oldSpacing * factor))
       if (Math.abs(newSpacing - oldSpacing) < 0.001) return
 
@@ -759,6 +780,69 @@ export function useChart() {
     chart.timeScale.firstIndex = Math.min(Math.max(0, snapshot.firstIndex), maxFirst)
     chart.scrollZoom?.updateState?.({ timeScale: chart.timeScale, totalBars: chart.dataSource?.length || 0 })
     chart.recalcPriceRange?.()
+    chart.layers?.markAllDirty?.()
+    chart.scheduleRender?.()
+    refreshTradeMarkers()
+  }
+
+  function createTimeframeAnchor() {
+    if (!currentBar.value) return null
+    return {
+      time: currentBar.value.time,
+      price: currentBar.value.close,
+      barSpacing: chart?.timeScale?.barSpacing || null,
+      visibleCount: chart?.timeScale?.visibleCount || null
+    }
+  }
+
+  function resolveTimeframeAnchor(anchor) {
+    if (!anchor?.time || !allBars.value.length) return null
+    const targetIndex = findNearestBarIndexByTime(allBars.value, anchor.time)
+    if (targetIndex < 0) return null
+    const firstTime = allBars.value[0]?.time
+    const lastTime = allBars.value[allBars.value.length - 1]?.time
+    return {
+      targetIndex,
+      outOfRange: Number(anchor.time) < Number(firstTime) || Number(anchor.time) > Number(lastTime)
+    }
+  }
+
+  function restoreTimeframeAnchor(anchor, result) {
+    if (!chart || !chart.timeScale || !result) return
+    const scale = chart.timeScale
+    const chartWidth = chart.chartWidth || chartContainerWidth()
+    const totalBars = chart.dataSource?.length || 0
+    const preferredSpacing = chartWidth
+      ? chartWidth / TIMEFRAME_ANCHOR_VISIBLE_BARS
+      : Number(anchor.barSpacing) || 6
+    const barSpacing = Math.max(4, Math.min(24, preferredSpacing || 6))
+    const visibleCount = Math.max(60, Math.ceil((chartWidth || TIMEFRAME_ANCHOR_VISIBLE_BARS * barSpacing) / barSpacing))
+    const maxFirst = Math.max(0, totalBars - visibleCount)
+    const firstIndex = result.targetIndex - visibleCount / 2
+
+    scale.barSpacing = barSpacing
+    scale.visibleCount = visibleCount
+    scale.offsetX = 0
+    scale.firstIndex = Math.min(Math.max(0, firstIndex), maxFirst)
+    chart.scrollZoom?.updateState?.({ timeScale: scale, totalBars })
+    chart.manualPriceScale = false
+    chart.recalcPriceRange?.()
+
+    if (Number.isFinite(Number(anchor.price)) && chart.priceScale) {
+      const currentMin = Number(chart.priceScale.min)
+      const currentMax = Number(chart.priceScale.max)
+      const currentRange = currentMax - currentMin
+      const fallbackRange = Math.max(Math.abs(Number(anchor.price)) * 0.02, 1)
+      const range = Number.isFinite(currentRange) && currentRange > 0 ? currentRange : fallbackRange
+      const center = Number(anchor.price)
+      chart.manualPriceScale = true
+      chart.priceScale = {
+        ...chart.priceScale,
+        min: center - range / 2,
+        max: center + range / 2
+      }
+    }
+
     chart.layers?.markAllDirty?.()
     chart.scheduleRender?.()
     refreshTradeMarkers()
@@ -903,14 +987,20 @@ export function useChart() {
     timeframe.value = dataset.timeframe || inferTimeframe(dataset.bars)
     dataSource.value = dataset.source || 'custom'
     datasetName.value = dataset.name || '未命名数据'
-    replayIndex.value = visibleStartIndex.value
+    const anchorResult = resolveTimeframeAnchor(options.timeframeAnchor)
+    replayIndex.value = anchorResult
+      ? anchorResult.targetIndex
+      : visibleStartIndex.value
     if (options.resetTrading !== false) {
       resetTradingState()
     }
     if (chart) {
+      if (!anchorResult) chart.manualPriceScale = false
       renderReplayWindow({ preserveTimeScale: false })
+      if (anchorResult) restoreTimeframeAnchor(options.timeframeAnchor, anchorResult)
     }
     saveSession()
+    return anchorResult
   }
 
   async function loadLatestBtcData(nextTimeframe = timeframe.value || '5m', options = {}) {
@@ -918,11 +1008,18 @@ export function useChart() {
     isLoadingData.value = true
     dataError.value = ''
     sessionMessage.value = `正在加载 BTCUSDT ${nextTimeframe} 最新K线...`
+    const timeframeAnchor = options.timeframeAnchor === undefined
+      ? createTimeframeAnchor()
+      : options.timeframeAnchor
     try {
       const dataset = await fetchLatestBtcBars({ timeframe: nextTimeframe, targetCount: 3000 })
-      applyDataset(dataset, { resetTrading: options.resetTrading })
+      const anchorResult = applyDataset(dataset, {
+        resetTrading: options.resetTrading,
+        timeframeAnchor
+      })
       const keepArchive = options.resetTrading === false
-      sessionMessage.value = `已加载 BTCUSDT ${nextTimeframe} 最新K线: ${dataset.bars.length} 根${keepArchive ? '，已保留成交历史与点评档案' : ''}`
+      const anchorMessage = anchorResult?.outOfRange ? '，目标时间不在当前数据范围，已定位到最近K线' : ''
+      sessionMessage.value = `已加载 BTCUSDT ${nextTimeframe} 最新K线: ${dataset.bars.length} 根${keepArchive ? '，已保留成交历史与点评档案' : ''}${anchorMessage}`
     } catch (err) {
       dataError.value = err?.message || 'BTC最新K线加载失败'
       sessionMessage.value = dataError.value
@@ -934,17 +1031,18 @@ export function useChart() {
 
   async function setTimeframe(nextTimeframe) {
     if (!nextTimeframe || nextTimeframe === timeframe.value) return
+    const timeframeAnchor = createTimeframeAnchor()
     if (dataSource.value === 'binance' || symbol.value === 'BTCUSDT') {
-      await loadLatestBtcData(nextTimeframe, { resetTrading: false })
+      await loadLatestBtcData(nextTimeframe, { resetTrading: false, timeframeAnchor })
       return
     }
-    applyDataset({
+    const anchorResult = applyDataset({
       ...makeDefaultDataset(),
       timeframe: nextTimeframe,
       name: `模拟数据 ${nextTimeframe}`,
       bars: generateMockBars({ timeframe: nextTimeframe, count: 600 })
-    })
-    sessionMessage.value = `已切换模拟数据周期: ${nextTimeframe}`
+    }, { timeframeAnchor })
+    sessionMessage.value = `已切换模拟数据周期: ${nextTimeframe}${anchorResult?.outOfRange ? '，目标时间不在当前数据范围，已定位到最近K线' : ''}`
   }
 
   function resetToMockData() {

@@ -1,86 +1,124 @@
-# K线回放交易 Demo
+# 价格行为 K 线复盘与 AI 交易点评工具
 
-基于b站Up主：dobby价格行为  的开源项目更改，以下是他b站主页地址
-https://space.bilibili.com/12474213?spm_id_from=333.788.upinfo.detail.click
+一个面向价格行为交易学习者的本地复盘工作台。项目以 K 线回放、模拟交易和历史订单归档为基础，重点接入 AI 点评能力，帮助用户从市场周期、多空力量、价格行为结构和 Al Brooks 风格规则角度复盘单笔交易。
 
-基于 **Vue 3 + Vite + @mg-exchange/charts** 的前端 demo，演示K线回放、画线和模拟交易功能。
-
-> 项目后续方向已调整为“AI价格行为复盘工作台”：K线工具只作为复盘输入载体，核心目标是基于 Al Brooks 价格行为体系进行 AI 纠偏、错题统计和本地知识库复盘。详见 [AI价格行为复盘工作台需求文档](docs/AI_REVIEW_WORKBENCH_REQUIREMENTS.md)。
+本项目基于 Vue 3、Vite、Electron 和 `@mg-exchange/charts` 构建，可作为 Web 应用运行，也可以打包为桌面应用。
 
 ## 功能特性
 
-### 🗂 历史数据与训练会话
-- 顶部支持导入 CSV 历史K线，导入后自动隐藏未来数据并从前 200 根上下文开始回放
-- 支持常见时间列：`time` / `timestamp` / `date` / `datetime` / `open_time`
-- 必需价格列：`open` / `high` / `low` / `close`，可选成交量列：`volume` / `vol` / `qty`
-- 训练会话会自动保存到浏览器 `localStorage`，刷新页面后恢复当前数据、回放进度、逐棒判断、委托、持仓和成交记录
-- 可一键回到内置模拟数据
+### K 线回放
 
-### 🧠 逐棒判断训练
-- 右侧提供“训练 / 报告 / 教练 / 交易”标签页，默认进入逐棒判断面板
-- 每根K线可记录：市场状态、K线角色、Always In、信号质量、交易计划、失效条件和判断理由
-- 记录按K线时间绑定，推进或回退后会自动显示对应K线的判断
-- 已判读数量会实时统计，为后续 AI 教练点评与错题本做数据准备
+- 支持 BTCUSDT 最新 K 线数据加载。
+- 支持 `1m`、`5m`、`15m`、`30m`、`1H`、`4H`、`1D` 等周期。
+- 支持 CSV 导入历史 K 线。
+- 按 `Space` 或点击按钮推进下一根 K 线。
+- 支持上一根、重置、自动播放。
+- EMA20 只基于已回放 K 线实时计算，不提前显示未来数据。
+- 支持 K 线编号，日内周期按北京时间早上 8 点重新计数，可设置显示间隔。
+- 鼠标滚轮横向缩放 K 线，缩放幅度较细，接近 TradingView 手感。
+- 鼠标左键拖动图表可上下左右平移：左右移动时间轴，上下移动价格轴。
+- 切换周期时按当前 K 线时间锚定，尽量保持切换前价格在图表中心。
 
-### 🧑‍🏫 本地教练与错题本
-- “教练”页可基于当前K线判断生成本地规则点评，不依赖网络或模型API
-- 点评会检查上下文缺失、铁丝网交易、低质量信号入场、逆 Always In、缺少失效条件等常见问题
-- 支持把当前K线标记为错题，并记录错因
-- 教练点评和错题标记都会随训练会话保存
+### 画线与图表工具
 
-### 📋 会话报告
-- 汇总当前训练会话的判读覆盖率、交易数、胜率、总盈亏、平均盈亏
-- 展示交易计划与市场状态分布
-- 展示错题数量、盈利/亏损/保本数量、盈亏因子和最近成交
+- 支持趋势线、水平线、射线、平行通道、矩形、箭头、文字等画线工具。
+- 支持 TradingView 风格多头/空头风险收益位置工具。
+- 支持磁吸 OHLC。
+- 画线或选中画线时会暂停图表缩放与拖动，避免误操作。
+- 可用 Delete 或 Backspace 删除选中画线。
+- 图表右键菜单支持复制当前价格。
 
-### 📊 K线回放
-- 一次性预生成 600 根 K 线数据
-- 初始只显示 200 根，后面的"未来数据"对图表不可见
-- **下一根**：点击或按 `Space` 推进一根 K 线，图表通过 `chart.updateBar()` 推送新数据
-- **自动播放**：每 400ms 自动前进一根（按 `P` 切换）
-- **重置**：随时回到起点（按 `R`）
-- 实时显示 OHLCV + 进度条
+### 模拟交易
 
-### ✏️ 画线功能
-左侧工具栏提供 12 个常用画线工具：趋势线 / 水平线 / 射线 / 平行通道 / 斐波那契 / 矩形 / 椭圆 / 箭头 / 文字 / 多空头位置等。
+- 支持市价做多、做空。
+- 支持限价单、止损单、突破单。
+- 支持委托线拖动修改价格。
+- 支持撤销单笔委托或全部委托。
+- 支持开仓后手动设置止盈、止损，并在图表上显示对应线条。
+- 支持自定义初始资金、下单数量或下单金额。
+- 默认初始资金为 `1000 USDT`，可一键重置。
 
-支持：
-- 切换画线工具（再次点击同一工具退出）
-- "磁吸 OHLC" 模式，吸附到K线高低点
-- 一键清除全部画线
-- 用 `@mg-exchange/charts` 内置的 47 种画线工具
+### 交易执行与历史复盘分离
 
-### 💰 模拟交易
-- **快速下单**：右上角"市价做多 / 做空"按钮
-- **画线下单**（核心）：
-  - 在图表上**右键** → 弹出自定义菜单 → 选择"限价买入 / 卖出 / 止损单"
-  - 委托单立刻在图表上画出**水平委托线**
-  - **拖动委托线**即可修改委托价格（`orderLineMoved` 事件）
-  - K线推进时自动撮合：触及限价/止损价立即成交
-- **持仓覆盖层**：使用 `setPositionOverlays()` 显示入场价位 + 盈亏
-- **账户面板**：余额 / 浮动盈亏 / 已实现盈亏 / 总权益
-- **历史成交**记录
+- 右侧只保留两个主要模块：`交易` 和 `报告`。
+- `交易` 页面聚焦当前模拟下单、持仓、委托和当前单临时点评。
+- `报告` 页面展示绩效统计和历史订单复盘档案。
+- 历史订单可筛选多空、盈亏、疑问单、已点评和错误标签。
+- 已完成订单在图表对应 K 线位置显示标记：
+  - 做多为向上箭头。
+  - 做空为向下箭头。
+  - 盈利为绿色。
+  - 亏损为红色。
+- 点击历史订单或图表订单标记，会定位到对应订单，但不会提前显示尚未复盘的未来 K 线。
 
-### ⌨️ 快捷键
-- `Space` → 前进一根 K 线
-- `P` → 切换自动播放
-- `R` → 重置回放
+### AI 交易点评
 
-## 运行
+- 支持 DeepSeek、OpenAI 或自定义 OpenAI 兼容代理接口。
+- AI 点评基于选中订单、账户信息、相关 K 线窗口、交易备注和本地规则卡生成。
+- 点评结构包含：
+  - 开盘背景
+  - 市场周期转换
+  - 逐 K 分析
+  - 本次交易 Setup
+  - 操作建议
+  - 常见错误
+  - 总结
+  - 评分和错误标签
+- 已点评订单默认查看旧结果，只有点击重新点评才覆盖。
+- 支持对同一笔订单继续追问，追问记录会保存到该订单档案中。
+- 支持浏览器语音输入，用于交易备注和追问。
+
+### 本地知识库
+
+- 内置价格行为规则卡。
+- 支持私有规则卡目录：
+
+```text
+knowledge_private/rule-cards/
+```
+
+- 私有规则卡不会提交到 Git。
+- 规则卡格式示例见 `docs/RULE_CARD_JSON_EXAMPLE.json`。
+- 可运行知识库校验，检查 JSON 合法性、重复 ID 和必填字段。
+
+### 会话保存、导入与恢复
+
+- 训练会话会自动保存到浏览器或桌面应用的 `localStorage`。
+- 切换周期或刷新 BTC 数据时，会保留历史订单、AI 点评、追问和疑问标记。
+- 支持导出复盘 JSON。
+- 支持导入复盘 JSON。
+- 提供 Electron 本地会话恢复脚本：
+
+```bash
+npm run build
+node scripts/recover-electron-session.cjs
+```
+
+恢复出的 `recovered-pa-session*.json` 已加入 `.gitignore`，不会上传。
+
+## 运行方式
+
+安装依赖：
 
 ```bash
 npm install
+```
+
+启动 Web 开发环境：
+
+```bash
 npm run dev
 ```
 
-打开 http://localhost:5173
+默认打开：
 
-## 桌面应用
+```text
+http://localhost:5173
+```
 
-项目已加入 Electron 外壳：
+启动桌面应用：
 
 ```bash
-npm install
 npm run desktop
 ```
 
@@ -90,9 +128,9 @@ npm run desktop
 npm run package:mac
 ```
 
-打包产物会输出到 `release/`。
+打包产物输出到 `release/`，该目录已被 Git 忽略。
 
-## CSV 格式
+## CSV 数据格式
 
 最小示例：
 
@@ -102,150 +140,94 @@ time,open,high,low,close,volume
 2026-01-01 09:35:00,101,103,100,102,980
 ```
 
-时间列可以使用 Unix 秒、Unix 毫秒，或可被浏览器解析的日期时间字符串。导入后会按时间升序排序，相同时间的K线以后出现的记录为准。
-
-## AI 点评接口
-
-右上角点击“AI设置”后可选择三种模式：
-
-- `DeepSeek`：填写 DeepSeek API Key，模型默认 `deepseek-chat`，代理接口留空。
-- `OpenAI`：填写 OpenAI API Key 和模型名，代理接口留空。
-- `自定义代理`：填写你自己的后端接口地址，由后端转发到任意模型服务。
-
-DeepSeek 默认直连地址为 `https://api.deepseek.com/chat/completions`。
-
-请求体包含：
-
-- `systemPrompt`：Al Brooks 价格行为复盘教练系统提示词
-- `sectionPrompts`：开盘背景、市场周期转换、逐K分析、本次交易 Setup、操作建议、常见错误、总结
-- `payload`：选中交易、上下文 K 线、账户/持仓/备注等结构化数据
-
-接口返回 JSON：
-
-```json
-{
-  "summary": "一句话核心结论",
-  "score": 82,
-  "sections": [{ "title": "逐K分析", "body": "...", "items": ["..."] }],
-  "issues": [{ "severity": "warn", "title": "问题", "detail": "..." }],
-  "suggestions": ["下一次执行规则"]
-}
-```
-
-成交历史中选中交易后可使用浏览器语音输入记录交易备注，点击“点评”时备注会随同交易上下文一起发给 AI 接口。
-
-### 私有规则卡
-
-桌面应用会读取本地私有规则卡目录：
+支持的时间列名：
 
 ```text
-knowledge_private/rule-cards/
+time, timestamp, date, datetime, open_time
 ```
 
-该目录已被 Git 忽略，不会上传。规则卡使用 JSON 格式，示例见 [RULE_CARD_JSON_EXAMPLE.json](docs/RULE_CARD_JSON_EXAMPLE.json)。
+必需价格列：
 
-本地知识库校验：
-
-```bash
-npm run knowledge:check
+```text
+open, high, low, close
 ```
 
-该命令会检查：
+可选成交量列：
 
-- 私有规则卡 JSON 是否合法
-- 规则 ID 是否重复
-- 必填字段是否完整
-- `knowledge_private/` 是否仍被 Git 忽略
-
-当前 AI 点评会从内置规则、浏览器本地规则和 `knowledge_private/rule-cards/` 中检索候选规则卡，并把最相关的规则传给模型。
-
-## 上传 GitHub 与隐私说明
-
-上传前请确认不要提交任何真实 API Key、账户私密信息或本机个人路径。
-
-本项目默认不会把 AI Key 写入源码：
-
-- DeepSeek / OpenAI Key 保存在当前浏览器或桌面应用的 `localStorage` 中，不会进入 Git 提交。
-- `.env`、`.env.*`、`*.local`、`node_modules/`、`dist/`、`release/` 已被 `.gitignore` 忽略。
-- 如果后续需要提供环境变量示例，请只提交 `.env.example`，不要提交真实 `.env`。
-
-上传前建议执行：
-
-```bash
-git status --short
-rg -n "api[_-]?key|secret|token|bearer|sk-|deepseek|openai" -S .
+```text
+volume, vol, qty
 ```
 
-确认没有真实密钥后提交：
+时间可以使用 Unix 秒、Unix 毫秒，或浏览器可解析的日期时间字符串。导入后会按时间升序排序，相同时间以后出现的数据为准。
+
+## AI 设置
+
+点击右上角 `AI设置`：
+
+- DeepSeek：选择 DeepSeek，填写 DeepSeek API Key，模型默认 `deepseek-chat`。
+- OpenAI：选择 OpenAI，填写 OpenAI API Key 和模型名。
+- 自定义代理：填写兼容 OpenAI Chat Completions 格式的接口地址。
+
+API Key 只保存在当前浏览器或 Electron 应用的 `localStorage`，不会写入源码或 Git 提交。
+
+## 常用命令
 
 ```bash
-git add .
-git commit -m "docs: prepare github upload"
-```
-
-如果远程仓库已经配置好：
-
-```bash
-git push -u origin feature/replay-trading-tools
-```
-
-如果还没有远程仓库：
-
-```bash
-git remote add origin https://github.com/<你的用户名>/<仓库名>.git
-git push -u origin feature/replay-trading-tools
+npm run dev              # Web 开发环境
+npm run desktop          # 桌面应用
+npm run build            # 生产构建
+npm run package:mac      # 打包 macOS 应用
+npm run knowledge:check  # 校验本地知识库
 ```
 
 ## 项目结构
 
-```
+```text
 src/
-├── main.js                       # Vue 入口
-├── App.vue                       # 主页面（三栏布局）
-├── styles/global.css             # 全局样式
-├── data/mockData.js              # K线数据生成器（确定性伪随机）
-├── composables/
-│   └── useChart.js               # 核心 composable：Chart 实例 + 状态管理
-└── components/
-    ├── ReplayBar.vue             # 顶部回放控制条
-    ├── DrawingToolbar.vue        # 左侧画线工具栏
-    └── TradePanel.vue            # 右侧交易/账户面板
+  App.vue                         # 主界面布局
+  composables/useChart.js          # 图表、回放、交易、点评状态管理
+  components/
+    ReplayBar.vue                  # 回放控制条
+    DrawingToolbar.vue             # 左侧画线工具栏
+    TradePanel.vue                 # 当前交易执行面板
+    ReportPanel.vue                # 绩效报告与历史订单复盘
+    TradeMarkersOverlay.vue        # 图表历史订单标记
+    AiSettingsModal.vue            # AI 接口设置
+  coach/
+    aiCoach.js                     # AI 点评和追问请求
+    localCoach.js                  # 点评 payload 构建
+    ruleCards.js                   # 规则卡读取与检索
+  data/
+    binanceData.js                 # BTC 最新 K 线加载
+    csvBars.js                     # CSV K 线解析
+    mockData.js                    # 内置模拟数据
+docs/
+  AI_REVIEW_WORKBENCH_REQUIREMENTS.md
+  RULE_CARD_JSON_EXAMPLE.json
+scripts/
+  validate-knowledge.cjs
+  recover-electron-session.cjs
 ```
 
-## 关键实现说明
+## 隐私与 GitHub 上传说明
 
-### 回放机制（`useChart.js`）
+上传前请确认不要提交以下内容：
 
+- 真实 API Key、Token、Secret。
+- `.env` 或 `.env.*`。
+- `knowledge_private/` 私有规则卡。
+- `recovered-pa-session*.json` 恢复出的复盘记录。
+- `dist/`、`release/`、`node_modules/`。
+
+当前 `.gitignore` 已忽略上述敏感或生成目录。上传前建议执行：
+
+```bash
+git status --short
+rg -n "api[_-]?key|secret|token|bearer|sk-|Authorization" -S . -g '!node_modules/**' -g '!dist/**' -g '!release/**' -g '!knowledge_private/**'
 ```
-allBars[600]  ←─── 一次性生成的完整数据
-              ↓
-   replayIndex ───→ 暴露给图表的"最新已显示"索引
-              ↓
-   datafeed.getBars() 只返回 [0..replayIndex] 内的数据
-              ↓
-   replayNext() ⇒ replayIndex++ + chart.updateBar(allBars[replayIndex])
-              ⇒ 触发挂单撮合 matchPendingOrders()
-              ⇒ 刷新 setPositionOverlays() 浮盈
-```
 
-### 画线下单
+命中代码中的字段名、占位说明或请求头模板是正常的，但不应出现真实密钥值。
 
-`chart.setTradeMode(true, { contextMenuItems })` 注册自定义右键菜单。
-用户点击菜单项后 `tradeRequested` 事件携带 `{ side, price, action }`，由 `onTradeRequested()` 路由到对应的下单函数，调用 `chart.addOrderLine()` 在图表上画出委托线。
+## 致谢
 
-### 撮合引擎
-
-每根新 K 线推进时遍历待成交挂单：
-
-- **限价买**：`bar.low <= order.price`
-- **限价卖**：`bar.high >= order.price`
-- **止损买**：`bar.high >= order.price`
-- **止损卖**：`bar.low <= order.price`
-
-触发后从挂单列表移除，并以委托价创建持仓。
-
-## 依赖
-
-- vue ^3.4
-- vite ^5.4
-- @mg-exchange/charts ^0.1.1
+本项目基于开源 K 线回放项目继续改造，当前方向聚焦于 AI 辅助价格行为交易复盘。

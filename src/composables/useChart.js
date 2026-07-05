@@ -767,19 +767,36 @@ export function useChart() {
     return x >= 0 && y >= 0 && x <= chartWidth && y <= chartHeight
   }
 
-  function applyChartPanDelta(deltaX) {
+  function applyChartPanDelta(deltaX, deltaY) {
     if (!chart?.timeScale) return
     const scale = chart.timeScale
     const totalBars = chart.dataSource?.length || 0
     const barSpacing = Math.max(MIN_BAR_SPACING, Number(scale.barSpacing) || 6)
     if (!totalBars || !Number.isFinite(barSpacing)) return
-    const maxFirst = Math.max(0, totalBars - scale.visibleCount)
-    scale.firstIndex = Math.min(
-      Math.max(0, Number(scale.firstIndex || 0) - deltaX / barSpacing),
-      maxFirst
-    )
-    chart.autoScroll = false
-    chart.scrollZoom?.updateState?.({ timeScale: scale, totalBars })
+    if (deltaX) {
+      const maxFirst = Math.max(0, totalBars - scale.visibleCount)
+      scale.firstIndex = Math.min(
+        Math.max(0, Number(scale.firstIndex || 0) - deltaX / barSpacing),
+        maxFirst
+      )
+      chart.autoScroll = false
+      chart.scrollZoom?.updateState?.({ timeScale: scale, totalBars })
+    }
+    if (deltaY && chart.priceScale) {
+      const paneHeight = chart.paneManager?.getMain?.().height || chart.chartHeight || chartContainerHeight()
+      const currentMin = Number(chart.priceScale.min)
+      const currentMax = Number(chart.priceScale.max)
+      const range = currentMax - currentMin
+      if (paneHeight > 0 && Number.isFinite(range) && range > 0) {
+        const priceShift = (deltaY / paneHeight) * range
+        chart.manualPriceScale = true
+        chart.priceScale = {
+          ...chart.priceScale,
+          min: currentMin + priceShift,
+          max: currentMax + priceShift
+        }
+      }
+    }
     chart.recalcPriceRange?.()
     chart.layers?.markAllDirty?.()
     chart.scheduleRender?.()
@@ -794,21 +811,28 @@ export function useChart() {
       if (!canStartChartPan(event)) return
       chartPanState = {
         lastX: event.clientX,
+        lastY: event.clientY,
         startX: event.clientX,
+        startY: event.clientY,
         dragging: false
       }
     }
     chartPanMouseMoveHandler = (event) => {
       if (!chartPanState) return
       const deltaX = event.clientX - chartPanState.lastX
-      const totalMove = Math.abs(event.clientX - chartPanState.startX)
+      const deltaY = event.clientY - chartPanState.lastY
+      const totalMove = Math.max(
+        Math.abs(event.clientX - chartPanState.startX),
+        Math.abs(event.clientY - chartPanState.startY)
+      )
       if (!chartPanState.dragging && totalMove < 3) return
       chartPanState.dragging = true
       chartPanState.lastX = event.clientX
+      chartPanState.lastY = event.clientY
       event.preventDefault()
       event.stopPropagation()
       if (chartPanTarget) chartPanTarget.style.cursor = 'grabbing'
-      applyChartPanDelta(deltaX)
+      applyChartPanDelta(deltaX, deltaY)
     }
     chartPanMouseUpHandler = () => {
       if (chartPanTarget) chartPanTarget.style.cursor = ''
@@ -1865,13 +1889,13 @@ export function useChart() {
     const trade = trades.find(t => t.id === tradeId)
     if (trade) {
       const openIndex = nearestBarIndexByTime(allBars.value, trade.openTime)
-      const targetIndex = openIndex >= 0
-        ? Math.min(allBars.value.length - 1, openIndex + TRADE_REVIEW_AFTER_BARS)
+      const revealedIndex = Math.min(allBars.value.length - 1, Math.max(0, replayIndex.value))
+      const targetIndex = openIndex >= 0 && openIndex <= revealedIndex
+        ? Math.min(revealedIndex, openIndex + TRADE_REVIEW_AFTER_BARS)
         : -1
       if (targetIndex >= 0) {
-        replayIndex.value = Math.min(allBars.value.length - 1, Math.max(0, targetIndex))
-        renderReplayWindow({ preserveTimeScale: false })
-        focusTradeWindow(openIndex, replayIndex.value)
+        focusTradeWindow(openIndex, targetIndex)
+        refreshTradeMarkers()
       }
     }
     saveSession()

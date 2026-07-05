@@ -361,6 +361,11 @@ export function useChart() {
   let ema20IndicatorId = null
   let tradingViewWheelTarget = null
   let tradingViewWheelHandler = null
+  let chartPanTarget = null
+  let chartPanMouseDownHandler = null
+  let chartPanMouseMoveHandler = null
+  let chartPanMouseUpHandler = null
+  let chartPanState = null
   const chartReady = ref(false)
 
   // ---------- 回放状态 ----------
@@ -564,6 +569,7 @@ export function useChart() {
     // 防御性：如果已经有 chart 实例（HMR 或重复挂载），先销毁
     if (chart) {
       uninstallTradingViewWheelZoom()
+      uninstallChartMousePan()
       try { chart.destroy() } catch (e) {}
       chart = null
       ema20IndicatorId = null
@@ -672,6 +678,7 @@ export function useChart() {
 
     chartReady.value = true
     installTradingViewWheelZoom()
+    installChartMousePan()
     ensureCoreIndicators()
     restoreChartDecorations()
     markerRefreshTimer = window.setInterval(refreshTradeMarkers, 250)
@@ -746,6 +753,88 @@ export function useChart() {
     }
     tradingViewWheelTarget = null
     tradingViewWheelHandler = null
+  }
+
+  function canStartChartPan(event) {
+    if (!chart?.timeScale || !chart?.container) return false
+    if (event.button !== 0 || event.defaultPrevented) return false
+    if (activeDrawingTool.value || selectedDrawingActive.value || chart.scrollZoom?.enabled === false) return false
+    const rect = chart.container.getBoundingClientRect()
+    const x = event.clientX - rect.left
+    const y = event.clientY - rect.top
+    const chartWidth = chart.chartWidth || chartContainerWidth()
+    const chartHeight = chart.chartHeight || chartContainerHeight()
+    return x >= 0 && y >= 0 && x <= chartWidth && y <= chartHeight
+  }
+
+  function applyChartPanDelta(deltaX) {
+    if (!chart?.timeScale) return
+    const scale = chart.timeScale
+    const totalBars = chart.dataSource?.length || 0
+    const barSpacing = Math.max(MIN_BAR_SPACING, Number(scale.barSpacing) || 6)
+    if (!totalBars || !Number.isFinite(barSpacing)) return
+    const maxFirst = Math.max(0, totalBars - scale.visibleCount)
+    scale.firstIndex = Math.min(
+      Math.max(0, Number(scale.firstIndex || 0) - deltaX / barSpacing),
+      maxFirst
+    )
+    chart.autoScroll = false
+    chart.scrollZoom?.updateState?.({ timeScale: scale, totalBars })
+    chart.recalcPriceRange?.()
+    chart.layers?.markAllDirty?.()
+    chart.scheduleRender?.()
+    refreshTradeMarkers()
+  }
+
+  function installChartMousePan() {
+    uninstallChartMousePan()
+    if (!chart?.container) return
+    chartPanTarget = chart.container
+    chartPanMouseDownHandler = (event) => {
+      if (!canStartChartPan(event)) return
+      chartPanState = {
+        lastX: event.clientX,
+        startX: event.clientX,
+        dragging: false
+      }
+    }
+    chartPanMouseMoveHandler = (event) => {
+      if (!chartPanState) return
+      const deltaX = event.clientX - chartPanState.lastX
+      const totalMove = Math.abs(event.clientX - chartPanState.startX)
+      if (!chartPanState.dragging && totalMove < 3) return
+      chartPanState.dragging = true
+      chartPanState.lastX = event.clientX
+      event.preventDefault()
+      event.stopPropagation()
+      if (chartPanTarget) chartPanTarget.style.cursor = 'grabbing'
+      applyChartPanDelta(deltaX)
+    }
+    chartPanMouseUpHandler = () => {
+      if (chartPanTarget) chartPanTarget.style.cursor = ''
+      chartPanState = null
+    }
+    chartPanTarget.addEventListener('mousedown', chartPanMouseDownHandler, { passive: false })
+    window.addEventListener('mousemove', chartPanMouseMoveHandler, { passive: false })
+    window.addEventListener('mouseup', chartPanMouseUpHandler)
+  }
+
+  function uninstallChartMousePan() {
+    if (chartPanTarget && chartPanMouseDownHandler) {
+      chartPanTarget.removeEventListener('mousedown', chartPanMouseDownHandler)
+    }
+    if (chartPanMouseMoveHandler) {
+      window.removeEventListener('mousemove', chartPanMouseMoveHandler)
+    }
+    if (chartPanMouseUpHandler) {
+      window.removeEventListener('mouseup', chartPanMouseUpHandler)
+    }
+    if (chartPanTarget) chartPanTarget.style.cursor = ''
+    chartPanTarget = null
+    chartPanMouseDownHandler = null
+    chartPanMouseMoveHandler = null
+    chartPanMouseUpHandler = null
+    chartPanState = null
   }
 
   // ---------- 回放控制 ----------
@@ -1942,6 +2031,7 @@ export function useChart() {
   function destroy() {
     stopAutoPlay()
     uninstallTradingViewWheelZoom()
+    uninstallChartMousePan()
     if (chart) {
       chart.destroy()
       chart = null
